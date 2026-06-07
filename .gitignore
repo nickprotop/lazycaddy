@@ -1,0 +1,56 @@
+# ── Build output ─────────────────────────────────────────────
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+build/
+publish/
+out/
+
+# ── .NET / Visual Studio / Rider ─────────────────────────────
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+.vscode/
+.idea/
+*.DotSettings.user
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# ── Test results ─────────────────────────────────────────────
+[Tt]est[Rr]esults/
+*.trx
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+coverage*.info
+TestResults/
+
+# ── NuGet ────────────────────────────────────────────────────
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+!packages/build/
+
+# ── Misc / OS ────────────────────────────────────────────────
+*.log
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+
+# ── Claude Code / Superpowers (local tooling, not part of the project) ─
+CLAUDE.md
+.claude/
+.superpowers/
+**/.superpowers/
+docs/superpowers/

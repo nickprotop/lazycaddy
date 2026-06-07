@@ -1,0 +1,90 @@
+// -----------------------------------------------------------------------
+// LazyCaddy - plain data DTOs for the Caddy admin API.
+//
+// These are immutable records built OFF the UI thread by the poll loop and
+// only read (never mutated) on the UI thread. Keep them dumb: no behaviour,
+// no references to UI types.
+// -----------------------------------------------------------------------
+
+namespace LazyCaddy.Models;
+
+/// <summary>Overall health/identity of the running Caddy instance.</summary>
+public sealed record CaddyStatus(
+    bool Running,
+    string Version,
+    TimeSpan Uptime,
+    int RouteCount,
+    int CertValidCount,
+    int CertExpiringCount,
+    int UpstreamUpCount,
+    int UpstreamDownCount)
+{
+    public static CaddyStatus Unknown => new(
+        Running: false,
+        Version: "unknown",
+        Uptime: TimeSpan.Zero,
+        RouteCount: 0,
+        CertValidCount: 0,
+        CertExpiringCount: 0,
+        UpstreamUpCount: 0,
+        UpstreamDownCount: 0);
+}
+
+/// <summary>One routing rule: public host/matcher -> internal upstream.</summary>
+public sealed record Route(
+    string HostOrMatch,
+    string Upstream,
+    bool TlsEnabled,
+    string Status,
+    // Pretty-printed JSON of this route's matcher+handler config, for the detail overlay.
+    string RawConfigJson,
+    // Admin-API path of this route node, e.g. "apps/http/servers/srv0/routes/0".
+    // Empty when unknown (e.g. dummy data). Used by Phase B for granular PATCH.
+    string ConfigPath = "");
+
+/// <summary>A TLS certificate managed by (or loaded into) Caddy.</summary>
+public sealed record Cert(
+    string Domain,
+    string Issuer,
+    DateTimeOffset Expires,
+    string AcmeStatus)
+{
+    /// <summary>Whole days until expiry from <paramref name="now"/> (floored, may be negative).</summary>
+    public int DaysLeft(DateTimeOffset now) => (int)Math.Floor((Expires - now).TotalDays);
+}
+
+/// <summary>Reachability state of a single upstream, including the active-probe result.</summary>
+public enum UpstreamReachability { Unknown, Probing, Up, Down }
+
+public sealed record Upstream(
+    string Address,
+    UpstreamReachability Reachability,
+    TimeSpan? Latency,
+    IReadOnlyList<string> UsedByRoutes)
+{
+    public Upstream WithProbe(UpstreamReachability reachability, TimeSpan? latency) =>
+        this with { Reachability = reachability, Latency = latency };
+}
+
+/// <summary>Request-rate-over-time series for the optional Overview sparkline.</summary>
+/// <remarks>
+/// Sourced from Caddy's Prometheus <c>/metrics</c> endpoint, which is not guaranteed
+/// to be enabled. <see cref="Available"/> is false when metrics could not be read; the
+/// Overview view hides the sparkline card in that case.
+/// </remarks>
+public sealed record MetricsSnapshot(
+    bool Available,
+    IReadOnlyList<double> RequestRate)
+{
+    public static MetricsSnapshot Unavailable => new(false, Array.Empty<double>());
+}
+
+/// <summary>The full set of data produced by one poll, plus a timestamp.</summary>
+public sealed record CaddySnapshot(
+    CaddyStatus Status,
+    IReadOnlyList<Route> Routes,
+    IReadOnlyList<Cert> Certs,
+    IReadOnlyList<Upstream> Upstreams,
+    MetricsSnapshot Metrics,
+    string RawConfigJson,
+    DateTimeOffset Timestamp);

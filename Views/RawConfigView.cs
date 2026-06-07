@@ -1,0 +1,127 @@
+// -----------------------------------------------------------------------
+// LazyCaddy - Raw Config: read-only, line-numbered, JSON-highlighted view of
+// the running config, with the control's built-in find/replace.
+// -----------------------------------------------------------------------
+
+using SharpConsoleUI;
+using SharpConsoleUI.Builders;
+using SharpConsoleUI.Controls;
+using SharpConsoleUI.Layout;
+using LazyCaddy.Configuration;
+using LazyCaddy.Dashboard;
+using LazyCaddy.Services;
+using LazyCaddy.UI.Modals;
+
+namespace LazyCaddy.Views;
+
+public sealed class RawConfigView
+{
+    private MultilineEditControl? _editor;
+    private string _lastContent = string.Empty;
+
+    private readonly ConsoleWindowSystem _ws;
+    private readonly EditCoordinator _coordinator;
+    private MarkupControl? _status;
+
+    public RawConfigView(ConsoleWindowSystem ws, EditCoordinator coordinator) { _ws = ws; _coordinator = coordinator; }
+
+    public void Build(ScrollablePanelControl panel)
+    {
+        var accent = UIConstants.Accent.ToMarkup();
+        var muted = UIConstants.MutedText.ToMarkup();
+
+        panel.AddControl(Controls.Markup()
+            .AddLine($"[bold {accent}]Raw Config[/]")
+            .AddLine($"[{muted}]Running config. Ctrl+F find · i edit · Ctrl+S apply · Esc cancel edit.[/]")
+            .AddEmptyLine()
+            .Build());
+
+        _editor = Controls.MultilineEdit(string.Empty)
+            .AsReadOnly(true)
+            .WithLineNumbers(true)
+            .WithSyntaxHighlighter(new JsonSyntaxHighlighter())
+            // Fill the available vertical space rather than capping at a fixed
+            // viewport height (the control expands to its layout bounds when Fill).
+            .WithVerticalAlignment(VerticalAlignment.Fill)
+            .NoWrap()
+            .WithVerticalScrollbar(ScrollbarVisibility.Auto)
+            .WithHorizontalScrollbar(ScrollbarVisibility.Auto)
+            .WithName("rawConfigEditor")
+            .Build();
+        panel.AddControl(_editor);
+
+        _status = Controls.Markup().WithMargin(2, 0, 2, 0).StickyBottom().Build();
+        panel.AddControl(_status);
+
+        // The NavigationView rebuilds this view each time it's reopened, producing a
+        // fresh empty editor. Reset the change-tracking sentinel so the next Update
+        // repopulates it (otherwise the unchanged-content guard leaves it blank).
+        _lastContent = string.Empty;
+    }
+
+    /// <summary>Edit-mode hotkeys, active only when the config editor has focus.
+    /// i: enter edit mode · Ctrl+S: apply via /load · Esc: cancel edit. Returns true if consumed.</summary>
+    public bool TryHandleKey(ConsoleKeyInfo key)
+    {
+        if (_editor is null || !_editor.HasFocus) return false;
+
+        // Enter edit mode.
+        if (key.Key == ConsoleKey.I && _editor.ReadOnly)
+        {
+            _editor.ReadOnly = false;
+            SetStatus($"[{UIConstants.Accent.ToMarkup()}]editing — Ctrl+S to apply, Esc to cancel[/]");
+            return true;
+        }
+
+        // Cancel edit mode: revert to last-known config, go read-only.
+        if (key.Key == ConsoleKey.Escape && !_editor.ReadOnly)
+        {
+            _editor.SetContent(_lastContent);
+            _editor.ReadOnly = true;
+            SetStatus("");
+            return true;
+        }
+
+        // Apply via /load.
+        if (key.Key == ConsoleKey.S && (key.Modifiers & ConsoleModifiers.Control) != 0 && !_editor.ReadOnly)
+        {
+            _ = ApplyRawAsync();
+            return true;
+        }
+
+        return false;
+    }
+
+    private async Task ApplyRawAsync()
+    {
+        if (_editor is null) return;
+        var newCfg = _editor.GetContent();
+        var oldCfg = _lastContent;
+        if (!await DiffConfirmDialog.ShowAsync(_ws, "Apply raw config (/load)", oldCfg, newCfg))
+            return;
+
+        var result = await _coordinator.ApplyAsync((a, ct) => a.LoadConfigAsync(newCfg, ct), "raw config edit (/load)");
+        _editor.ReadOnly = true;
+        if (result.Success)
+        {
+            _lastContent = newCfg;
+            SetStatus($"[{UIConstants.MutedText.ToMarkup()}]applied[/]");
+        }
+        else
+        {
+            SetStatus($"[{UIConstants.Bad.ToMarkup()}]{(result.Error ?? "write failed").Replace("[", "[[").Replace("]", "]]")}[/]");
+        }
+    }
+
+    private void SetStatus(string markup) => _status?.SetContent(new List<string> { markup });
+
+    public void Update(DashboardState state)
+    {
+        var snap = state.Snapshot;
+        if (snap is null || _editor is null) return;
+        if (!_editor.ReadOnly) return; // don't overwrite an in-progress edit
+        if (snap.RawConfigJson == _lastContent) return;
+        _lastContent = snap.RawConfigJson;
+        _editor.SetContent(snap.RawConfigJson);
+    }
+}
