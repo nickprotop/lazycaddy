@@ -98,7 +98,11 @@ public sealed class DashboardShell
         // off the UI thread, so marshal the relayout back onto it (same event
         // ServerHub uses for its dynamic dashboard layout).
         _ws.ConsoleDriver.ScreenResized += (_, size) =>
-            _ws.EnqueueOnUIThread(() => _overview.HandleResize(size.Width), "overview:reflow");
+            _ws.EnqueueOnUIThread(() =>
+            {
+                _overview.HandleResize(size.Width);
+                _topology.HandleResize();
+            }, "view:reflow");
     }
 
     private NavigationView BuildNavigation()
