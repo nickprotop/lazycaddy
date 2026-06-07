@@ -31,7 +31,7 @@ public sealed class SnapshotsView
         var muted = UIConstants.MutedText.ToMarkup();
         panel.AddControl(Controls.Markup()
             .AddLine($"[bold {accent}]Snapshots[/]")
-            .AddLine($"[{muted}]Config history. Enter: preview/restore.  p: pin/unpin.  Auto-captured before each edit.[/]")
+            .AddLine($"[{muted}]Config history. Auto-captured before each edit.[/]")
             .AddEmptyLine().Build());
 
         _toolbar = ViewToolbar.Create("snapshotsToolbar");
@@ -56,9 +56,10 @@ public sealed class SnapshotsView
     private void RebuildToolbar()
     {
         if (_toolbar is null) return;
-        // Both always shown; no-op without a selected snapshot.
+        // Restore/Pin are no-ops without a selected snapshot; Snapshot-now always works.
         ViewToolbar.Rebuild(_toolbar, new ToolbarAction?[]
         {
+            new(ViewToolbar.Caption("⊕", "Snapshot now", "S"), () => _ = SnapshotNowAsync()),
             new(ViewToolbar.Caption("↩", "Restore", "Enter"), () => _ = RestoreSelectedAsync()),
             new(ViewToolbar.Caption("⊙", "Pin", "p"), PinSelected),
         });
@@ -77,6 +78,21 @@ public sealed class SnapshotsView
     {
         if (_table?.SelectedRow?.Tag is not Snapshot s) return;
         _editor.Snapshots.Pin(s.Id, !s.Pinned);
+        Refresh();
+    }
+
+    /// <summary>Capture the current running config under a user-supplied label.
+    /// Mirrors the shell's Shift+S behavior.</summary>
+    private async Task SnapshotNowAsync()
+    {
+        var label = await SnapshotNowDialog.ShowAsync(_ws);
+        if (label is null) return; // cancelled
+        try
+        {
+            var cfg = await _editor.GetRawConfigAsync();
+            _editor.Snapshots.Capture(cfg, label);
+        }
+        catch { /* ignore: snapshot is best-effort */ }
         Refresh();
     }
 

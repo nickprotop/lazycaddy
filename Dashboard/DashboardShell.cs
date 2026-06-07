@@ -102,6 +102,9 @@ public sealed class DashboardShell
             {
                 _overview.HandleResize(size.Width);
                 _topology.HandleResize();
+                // Full-window repaint clears stale regions (e.g. Topology canvas
+                // ghosting the Overview cards at the top on resize).
+                _window?.Invalidate(true);
             }, "view:reflow");
     }
 

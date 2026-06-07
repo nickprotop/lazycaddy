@@ -28,6 +28,10 @@ public sealed class EditCoordinator
     public Task<string> GetConfigNodeAsync(string path, CancellationToken ct = default)
         => _admin.GetConfigNodeAsync(path, ct);
 
+    /// <summary>GET the full running config as raw JSON (passthrough for manual snapshots).</summary>
+    public Task<string> GetRawConfigAsync(CancellationToken ct = default)
+        => _admin.GetRawConfigAsync(ct);
+
     /// <summary>Snapshot the current full config, then run <paramref name="write"/>.</summary>
     public async Task<WriteResult> ApplyAsync(
         Func<ICaddyAdmin, CancellationToken, Task<WriteResult>> write,

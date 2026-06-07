@@ -34,7 +34,7 @@ public sealed class RawConfigView
 
         panel.AddControl(Controls.Markup()
             .AddLine($"[bold {accent}]Raw Config[/]")
-            .AddLine($"[{muted}]Running config. Ctrl+F find · i edit · Ctrl+S apply · Esc cancel edit.[/]")
+            .AddLine($"[{muted}]Running config (JSON).[/]")
             .AddEmptyLine()
             .Build());
 

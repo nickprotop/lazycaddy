@@ -38,10 +38,7 @@ public sealed class RoutesView
         switch (key.Key)
         {
             case ConsoleKey.E:
-                EditUpstream();
-                return true;
-            case ConsoleKey.M:
-                EditMatcher();
+                EditRoute();
                 return true;
             case ConsoleKey.N:
                 NewRoute();
@@ -59,14 +56,9 @@ public sealed class RoutesView
 
     private Route? Selected => _table?.SelectedRow?.Tag as Route;
 
-    private void EditUpstream()
+    private void EditRoute()
     {
-        if (Selected is { } route) _ = EditUpstreamDialog.ShowAsync(_windowSystem, route, _editor);
-    }
-
-    private void EditMatcher()
-    {
-        if (Selected is { } route) _ = EditMatcherDialog.ShowAsync(_windowSystem, route, _editor);
+        if (Selected is { } route) _ = EditRouteDialog.ShowAsync(_windowSystem, route, _editor);
     }
 
     private void NewRoute()
@@ -104,7 +96,7 @@ public sealed class RoutesView
 
         panel.AddControl(Controls.Markup()
             .AddLine($"[bold {accent}]Routes[/]")
-            .AddLine($"[{muted}]Public host/match → internal upstream. Enter/double-click: edit upstream.[/]")
+            .AddLine($"[{muted}]Public host → upstream. Select a row to edit.[/]")
             .AddEmptyLine()
             .Build());
 
@@ -129,11 +121,11 @@ public sealed class RoutesView
         // resumes on the UI thread after the await, so touching controls is safe.
         // Resolve the route from the row's Tag (set in Update) rather than the raw
         // index, so it stays correct under the table's own sorting/filtering.
-        // Enter / double-click on a route row opens the primary edit (upstream).
+        // Enter / double-click on a route row opens the combined edit dialog.
         _table.RowActivatedAsync += async (sender, rowIndex) =>
         {
             if (_table?.SelectedRow?.Tag is Route r)
-                await EditUpstreamDialog.ShowAsync(_windowSystem, r, _editor);
+                await EditRouteDialog.ShowAsync(_windowSystem, r, _editor);
         };
 
         // Adaptive toolbar: rebuild when the selection changes so context buttons
@@ -150,8 +142,7 @@ public sealed class RoutesView
         var hasRow = Selected is not null;
         var actions = new List<ToolbarAction?>
         {
-            new(ViewToolbar.Caption("✎", "Edit", "e"), EditUpstream),
-            new(ViewToolbar.Caption("⊞", "Matcher", "m"), EditMatcher),
+            new(ViewToolbar.Caption("✎", "Edit", "e"), EditRoute),
             new(ViewToolbar.Caption("⊕", "New", "n"), NewRoute),
         };
         if (hasRow)
