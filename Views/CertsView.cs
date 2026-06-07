@@ -11,6 +11,7 @@ using LazyCaddy.Configuration;
 using LazyCaddy.Dashboard;
 using LazyCaddy.Models;
 using LazyCaddy.Services;
+using LazyCaddy.UI;
 using LazyCaddy.UI.Modals;
 
 namespace LazyCaddy.Views;
@@ -21,6 +22,7 @@ public sealed class CertsView
     private readonly EditCoordinator _editor;
 
     private TableControl? _table;
+    private ToolbarControl? _toolbar;
 
     public CertsView(ConsoleWindowSystem ws, EditCoordinator editor) { _ws = ws; _editor = editor; }
 
@@ -29,13 +31,19 @@ public sealed class CertsView
     public bool TryHandleKey(ConsoleKeyInfo key)
     {
         if (_table is null || !_table.HasFocus) return false;
-        if (_table.SelectedRow?.Tag is not Cert cert) return false;
         if (key.Key == ConsoleKey.E)
         {
-            _ = EditTlsPolicyDialog.ShowAsync(_ws, cert, _editor);
+            EditTls();
             return true;
         }
         return false;
+    }
+
+    // Shared handler for both the 'e' key and the TLS toolbar button. No-ops without a row.
+    private void EditTls()
+    {
+        if (_table?.SelectedRow?.Tag is Cert cert)
+            _ = EditTlsPolicyDialog.ShowAsync(_ws, cert, _editor);
     }
 
     public void Build(ScrollablePanelControl panel)
@@ -48,6 +56,9 @@ public sealed class CertsView
             .AddLine($"[{muted}]Certificate health. Days-left is color-coded by urgency.[/]")
             .AddEmptyLine()
             .Build());
+
+        _toolbar = ViewToolbar.Create("certsToolbar");
+        panel.AddControl(_toolbar);
 
         _table = Controls.Table()
             .AddColumn("Domain", TextJustification.Left)
@@ -64,7 +75,20 @@ public sealed class CertsView
             .WithName("certsTable")
             .Build();
 
+        _table.SelectedRowChanged += (_, _) => RebuildToolbar();
+
         panel.AddControl(_table);
+        RebuildToolbar();
+    }
+
+    private void RebuildToolbar()
+    {
+        if (_toolbar is null) return;
+        // Always shown; no-ops without a selected cert.
+        ViewToolbar.Rebuild(_toolbar, new ToolbarAction?[]
+        {
+            new(ViewToolbar.Caption("🔒", "TLS", "e"), EditTls),
+        });
     }
 
     public void Update(DashboardState state)
@@ -84,6 +108,7 @@ public sealed class CertsView
                 UIConstants.StatusMarkup(c.AcmeStatus))
             { Tag = c });
         }
+        RebuildToolbar();
     }
 
     private static string Escape(string s) => s.Replace("[", "[[").Replace("]", "]]");

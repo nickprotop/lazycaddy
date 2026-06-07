@@ -11,6 +11,7 @@ using LazyCaddy.Configuration;
 using LazyCaddy.Dashboard;
 using LazyCaddy.Models;
 using LazyCaddy.Services;
+using LazyCaddy.UI;
 using LazyCaddy.UI.Modals;
 
 namespace LazyCaddy.Views;
@@ -20,6 +21,7 @@ public sealed class SnapshotsView
     private readonly ConsoleWindowSystem _ws;
     private readonly EditCoordinator _editor;
     private TableControl? _table;
+    private ToolbarControl? _toolbar;
 
     public SnapshotsView(ConsoleWindowSystem ws, EditCoordinator editor) { _ws = ws; _editor = editor; }
 
@@ -32,6 +34,9 @@ public sealed class SnapshotsView
             .AddLine($"[{muted}]Config history. Enter: preview/restore.  p: pin/unpin.  Auto-captured before each edit.[/]")
             .AddEmptyLine().Build());
 
+        _toolbar = ViewToolbar.Create("snapshotsToolbar");
+        panel.AddControl(_toolbar);
+
         _table = Controls.Table()
             .AddColumn("Time", TextJustification.Left, 22)
             .AddColumn("Description", TextJustification.Left)
@@ -40,16 +45,38 @@ public sealed class SnapshotsView
             .Interactive().WithSorting().WithVerticalScrollbar(ScrollbarVisibility.Auto)
             .WithName("snapshotsTable").Build();
 
-        _table.RowActivatedAsync += async (_, _) =>
-        {
-            if (_table?.SelectedRow?.Tag is Snapshot s)
-            {
-                await SnapshotPickerDialog.ShowAsync(_ws, s, _editor);
-                Refresh();
-            }
-        };
+        _table.RowActivatedAsync += async (_, _) => await RestoreSelectedAsync();
+        _table.SelectedRowChanged += (_, _) => RebuildToolbar();
 
         panel.AddControl(_table);
+        Refresh();
+        RebuildToolbar();
+    }
+
+    private void RebuildToolbar()
+    {
+        if (_toolbar is null) return;
+        // Both always shown; no-op without a selected snapshot.
+        ViewToolbar.Rebuild(_toolbar, new ToolbarAction?[]
+        {
+            new(ViewToolbar.Caption("↩", "Restore", "Enter"), () => _ = RestoreSelectedAsync()),
+            new(ViewToolbar.Caption("⊙", "Pin", "p"), PinSelected),
+        });
+    }
+
+    // ── Shared handlers (invoked by both keys/activation and toolbar buttons) ──
+
+    private async Task RestoreSelectedAsync()
+    {
+        if (_table?.SelectedRow?.Tag is not Snapshot s) return;
+        await SnapshotPickerDialog.ShowAsync(_ws, s, _editor);
+        Refresh();
+    }
+
+    private void PinSelected()
+    {
+        if (_table?.SelectedRow?.Tag is not Snapshot s) return;
+        _editor.Snapshots.Pin(s.Id, !s.Pinned);
         Refresh();
     }
 
@@ -66,6 +93,7 @@ public sealed class SnapshotsView
                 s.Pinned ? $"[{UIConstants.Accent.ToMarkup()}]●[/]" : "")
             { Tag = s });
         }
+        RebuildToolbar();
     }
 
     public void Update(DashboardState state) { /* snapshot data is independent of the poll */ }
@@ -74,10 +102,9 @@ public sealed class SnapshotsView
     public bool TryHandleKey(ConsoleKeyInfo key)
     {
         if (_table is null || !_table.HasFocus) return false;
-        if (key.Key == ConsoleKey.P && _table.SelectedRow?.Tag is Snapshot s)
+        if (key.Key == ConsoleKey.P)
         {
-            _editor.Snapshots.Pin(s.Id, !s.Pinned);
-            Refresh();
+            PinSelected();
             return true;
         }
         return false;

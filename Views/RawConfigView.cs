@@ -10,6 +10,7 @@ using SharpConsoleUI.Layout;
 using LazyCaddy.Configuration;
 using LazyCaddy.Dashboard;
 using LazyCaddy.Services;
+using LazyCaddy.UI;
 using LazyCaddy.UI.Modals;
 
 namespace LazyCaddy.Views;
@@ -22,6 +23,7 @@ public sealed class RawConfigView
     private readonly ConsoleWindowSystem _ws;
     private readonly EditCoordinator _coordinator;
     private MarkupControl? _status;
+    private ToolbarControl? _toolbar;
 
     public RawConfigView(ConsoleWindowSystem ws, EditCoordinator coordinator) { _ws = ws; _coordinator = coordinator; }
 
@@ -35,6 +37,10 @@ public sealed class RawConfigView
             .AddLine($"[{muted}]Running config. Ctrl+F find · i edit · Ctrl+S apply · Esc cancel edit.[/]")
             .AddEmptyLine()
             .Build());
+
+        _toolbar = ViewToolbar.Create("rawConfigToolbar");
+        panel.AddControl(_toolbar);
+        RebuildToolbar();
 
         _editor = Controls.MultilineEdit(string.Empty)
             .AsReadOnly(true)
@@ -68,28 +74,61 @@ public sealed class RawConfigView
         // Enter edit mode.
         if (key.Key == ConsoleKey.I && _editor.ReadOnly)
         {
-            _editor.ReadOnly = false;
-            SetStatus($"[{UIConstants.Accent.ToMarkup()}]editing — Ctrl+S to apply, Esc to cancel[/]");
+            EnterEdit();
             return true;
         }
 
         // Cancel edit mode: revert to last-known config, go read-only.
         if (key.Key == ConsoleKey.Escape && !_editor.ReadOnly)
         {
-            _editor.SetContent(_lastContent);
-            _editor.ReadOnly = true;
-            SetStatus("");
+            CancelEdit();
             return true;
         }
 
         // Apply via /load.
         if (key.Key == ConsoleKey.S && (key.Modifiers & ConsoleModifiers.Control) != 0 && !_editor.ReadOnly)
         {
-            _ = ApplyRawAsync();
+            ApplyEdit();
             return true;
         }
 
         return false;
+    }
+
+    // ── Shared handlers (invoked by both keys and toolbar buttons) ──
+
+    private void EnterEdit()
+    {
+        if (_editor is null || !_editor.ReadOnly) return;
+        _editor.ReadOnly = false;
+        SetStatus($"[{UIConstants.Accent.ToMarkup()}]editing — Ctrl+S to apply, Esc to cancel[/]");
+        RebuildToolbar();
+    }
+
+    private void CancelEdit()
+    {
+        if (_editor is null || _editor.ReadOnly) return;
+        _editor.SetContent(_lastContent);
+        _editor.ReadOnly = true;
+        SetStatus("");
+        RebuildToolbar();
+    }
+
+    private void ApplyEdit()
+    {
+        if (_editor is null || _editor.ReadOnly) return;
+        _ = ApplyRawAsync();
+    }
+
+    private void RebuildToolbar()
+    {
+        if (_toolbar is null) return;
+        ViewToolbar.Rebuild(_toolbar, new ToolbarAction?[]
+        {
+            new(ViewToolbar.Caption("✎", "Edit", "i"), EnterEdit),
+            new(ViewToolbar.Caption("✔", "Apply", "^S"), ApplyEdit),
+            new(ViewToolbar.Caption("↩", "Cancel", "Esc"), CancelEdit),
+        });
     }
 
     private async Task ApplyRawAsync()
@@ -102,6 +141,7 @@ public sealed class RawConfigView
 
         var result = await _coordinator.ApplyAsync((a, ct) => a.LoadConfigAsync(newCfg, ct), "raw config edit (/load)");
         _editor.ReadOnly = true;
+        RebuildToolbar();
         if (result.Success)
         {
             _lastContent = newCfg;
