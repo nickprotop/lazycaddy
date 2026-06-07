@@ -19,6 +19,18 @@ public static class EditPatchBuilder
     public static string HostMatcher(IEnumerable<string> hosts)
         => JsonSerializer.Serialize(new object[] { new { host = hosts.ToArray() } }, Opt);
 
+    /// <summary>JSON for a route match array with host and/or path matchers:
+    /// [{"host":[...],"path":[...]}] — omits an empty matcher key.</summary>
+    public static string HostPathMatcher(IEnumerable<string> hosts, IEnumerable<string> paths)
+    {
+        var h = hosts.ToArray();
+        var p = paths.ToArray();
+        var matcher = new Dictionary<string, object>();
+        if (h.Length > 0) matcher["host"] = h;
+        if (p.Length > 0) matcher["path"] = p;
+        return JsonSerializer.Serialize(new object[] { matcher }, Opt);
+    }
+
     /// <summary>JSON for a complete reverse-proxy route (host -> upstream).</summary>
     public static string ReverseProxyRoute(string host, string upstreamDial)
         => JsonSerializer.Serialize(new

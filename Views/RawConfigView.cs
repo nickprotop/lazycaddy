@@ -71,6 +71,13 @@ public sealed class RawConfigView
     {
         if (_editor is null || !_editor.HasFocus) return false;
 
+        // Find (read-only search).
+        if (key.Key == ConsoleKey.F && (key.Modifiers & ConsoleModifiers.Control) != 0)
+        {
+            OpenFind();
+            return true;
+        }
+
         // Enter edit mode.
         if (key.Key == ConsoleKey.I && _editor.ReadOnly)
         {
@@ -96,6 +103,12 @@ public sealed class RawConfigView
     }
 
     // ── Shared handlers (invoked by both keys and toolbar buttons) ──
+
+    private void OpenFind()
+    {
+        if (_editor is null) return;
+        _ = FindDialog.ShowAsync(_ws, _editor);
+    }
 
     private void EnterEdit()
     {
@@ -125,6 +138,7 @@ public sealed class RawConfigView
         if (_toolbar is null) return;
         ViewToolbar.Rebuild(_toolbar, new ToolbarAction?[]
         {
+            new(ViewToolbar.Caption("🔍", "Find", "^F"), OpenFind),
             new(ViewToolbar.Caption("✎", "Edit", "i"), EnterEdit),
             new(ViewToolbar.Caption("✔", "Apply", "^S"), ApplyEdit),
             new(ViewToolbar.Caption("↩", "Cancel", "Esc"), CancelEdit),
