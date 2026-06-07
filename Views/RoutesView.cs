@@ -47,7 +47,8 @@ public sealed class RoutesView
                 DeleteSelected();
                 return true;
             case ConsoleKey.H:
-                EnableHttps();
+                if (Selected is { TlsEnabled: true }) DisableHttps();
+                else EnableHttps();
                 return true;
             default:
                 return false;
@@ -101,6 +102,66 @@ public sealed class RoutesView
         await _editor.ApplyAsync(
             (admin, ct) => admin.PostConfigAsync("apps/tls/automation/policies", newJson, ct),
             $"enable HTTPS for {string.Join(", ", hosts)}");
+    }
+
+    // Stop managing TLS for the selected route's host: remove it from its automation
+    // policy's subjects (or delete the policy if it was the only subject).
+    private void DisableHttps()
+    {
+        if (Selected is { } route && route.TlsEnabled) _ = DisableHttpsAsync(route);
+    }
+
+    private async Task DisableHttpsAsync(Route route)
+    {
+        var host = route.HostOrMatch.Split(' ')[0]
+            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault();
+        if (string.IsNullOrEmpty(host)) return;
+
+        string policiesJson;
+        try { policiesJson = await _editor.GetConfigNodeAsync("apps/tls/automation/policies"); }
+        catch { return; }
+
+        using var doc = System.Text.Json.JsonDocument.Parse(policiesJson);
+        if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array) return;
+
+        int polIdx = -1; string[] subjects = Array.Empty<string>();
+        int i = 0;
+        foreach (var pol in doc.RootElement.EnumerateArray())
+        {
+            if (pol.TryGetProperty("subjects", out var subs) && subs.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                var list = subs.EnumerateArray().Where(e => e.ValueKind == System.Text.Json.JsonValueKind.String)
+                    .Select(e => e.GetString()!).ToArray();
+                if (list.Contains(host)) { polIdx = i; subjects = list; break; }
+            }
+            i++;
+        }
+        if (polIdx < 0) return; // host not managed
+
+        var remaining = subjects.Where(s => s != host).ToArray();
+        string title, label;
+        Func<ICaddyAdmin, CancellationToken, Task<WriteResult>> write;
+        if (remaining.Length == 0)
+        {
+            // Sole subject → remove the whole policy.
+            title = $"Disable HTTPS for {host} (remove TLS policy)";
+            label = $"disable HTTPS for {host}";
+            write = (admin, ct) => admin.DeleteConfigAsync($"apps/tls/automation/policies/{polIdx}", ct);
+            if (!await DiffConfirmDialog.ShowAsync(_windowSystem, title,
+                    System.Text.Json.JsonSerializer.Serialize(subjects), "(policy removed)")) return;
+        }
+        else
+        {
+            // Trim just this subject from the policy.
+            title = $"Disable HTTPS for {host}";
+            label = $"disable HTTPS for {host}";
+            var newSubjects = System.Text.Json.JsonSerializer.Serialize(remaining);
+            write = (admin, ct) => admin.PatchConfigAsync($"apps/tls/automation/policies/{polIdx}/subjects", newSubjects, ct);
+            if (!await DiffConfirmDialog.ShowAsync(_windowSystem, title,
+                    System.Text.Json.JsonSerializer.Serialize(subjects), newSubjects)) return;
+        }
+        await _editor.ApplyAsync(write, label);
     }
 
     // Derive the server path (apps/http/servers/<name>) from a route's ConfigPath.
@@ -179,8 +240,10 @@ public sealed class RoutesView
         if (hasRow)
         {
             actions.Add(null); // separator
-            // Offer "Enable HTTPS" only for a route that doesn't already have TLS.
-            if (Selected is { TlsEnabled: false })
+            // Toggle TLS for the host: Enable when off, Disable when on.
+            if (Selected is { TlsEnabled: true })
+                actions.Add(new(ViewToolbar.Caption("🔓", "Disable HTTPS", "h"), DisableHttps));
+            else
                 actions.Add(new(ViewToolbar.Caption("🔒", "Enable HTTPS", "h"), EnableHttps));
             actions.Add(new(ViewToolbar.Caption("✕", "Delete", "d"), DeleteSelected));
         }
@@ -192,6 +255,9 @@ public sealed class RoutesView
         var snap = state.Snapshot;
         if (snap is null || _table is null) return;
 
+        // Preserve the selected row across the refresh so adaptive toolbar actions
+        // (Edit/Delete/HTTPS) don't vanish on every poll tick; default to row 0.
+        int prev = _table.SelectedRowIndex;
         _table.ClearRows();
         foreach (var r in snap.Routes)
         {
@@ -207,7 +273,16 @@ public sealed class RoutesView
                 Tag = r,
             });
         }
+        RestoreSelection(prev, snap.Routes.Count);
         RebuildToolbar();
+    }
+
+    // Reselect a row after a data refresh: keep the prior index if still valid,
+    // else select the first row so contextual actions stay available.
+    private void RestoreSelection(int prevIndex, int count)
+    {
+        if (_table is null || count == 0) return;
+        _table.SelectedRowIndex = prevIndex >= 0 && prevIndex < count ? prevIndex : 0;
     }
 
     private static string Escape(string s) => s.Replace("[", "[[").Replace("]", "]]");

@@ -99,6 +99,7 @@ public sealed class CertsView
         if (snap is null || _table is null) return;
 
         var now = snap.Timestamp;
+        int prev = _table.SelectedRowIndex;
         _table.ClearRows();
         foreach (var c in snap.Certs)
         {
@@ -110,6 +111,8 @@ public sealed class CertsView
                 UIConstants.StatusMarkup(c.AcmeStatus))
             { Tag = c });
         }
+        if (snap.Certs.Count > 0)
+            _table.SelectedRowIndex = prev >= 0 && prev < snap.Certs.Count ? prev : 0;
         RebuildToolbar();
     }
 

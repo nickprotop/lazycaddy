@@ -100,8 +100,10 @@ public sealed class SnapshotsView
     public void Refresh()
     {
         if (_table is null) return;
+        int prev = _table.SelectedRowIndex;
         _table.ClearRows();
-        foreach (var s in _editor.Snapshots.All())
+        var all = _editor.Snapshots.All();
+        foreach (var s in all)
         {
             _table.AddRow(new TableRow(
                 s.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
@@ -109,6 +111,8 @@ public sealed class SnapshotsView
                 s.Pinned ? $"[{UIConstants.Accent.ToMarkup()}]●[/]" : "")
             { Tag = s });
         }
+        if (all.Count > 0)
+            _table.SelectedRowIndex = prev >= 0 && prev < all.Count ? prev : 0;
         RebuildToolbar();
     }
 
