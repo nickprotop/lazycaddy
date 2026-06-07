@@ -36,6 +36,7 @@ public sealed class DashboardShell
     private readonly TopologyView _topology = new();
 
     private Window? _window;
+    private NavigationView? _nav;
 
     // Status bar item handles, mutated in place each tick (Label supports markup).
     private StatusBarItem? _connItem;
@@ -65,7 +66,7 @@ public sealed class DashboardShell
 
     public void Create()
     {
-        var nav = BuildNavigation();
+        _nav = BuildNavigation();
         var statusBar = BuildStatusBar();
 
         var gradient = ColorGradient.FromColors(UIConstants.BaseBg, UIConstants.BaseEnd);
@@ -86,7 +87,7 @@ public sealed class DashboardShell
             .Movable(false)
             .Resizable(false)
             .OnKeyPressed(OnKeyPressed)
-            .AddControl(nav)
+            .AddControl(_nav)
             .AddControl(statusBar)
             .WithAsyncWindowThread(PollLoopAsync)
             .BuildAndShow();
@@ -97,7 +98,11 @@ public sealed class DashboardShell
         // off the UI thread, so marshal the relayout back onto it (same event
         // ServerHub uses for its dynamic dashboard layout).
         _ws.ConsoleDriver.ScreenResized += (_, size) =>
-            _ws.EnqueueOnUIThread(() => _overview.HandleResize(size.Width), "overview:reflow");
+            _ws.EnqueueOnUIThread(() =>
+            {
+                _overview.HandleResize(size.Width);
+                _topology.HandleResize();
+            }, "view:reflow");
     }
 
     private NavigationView BuildNavigation()
@@ -180,8 +185,22 @@ public sealed class DashboardShell
 
     private void Quit() => _ws.Shutdown(0);
 
+    // Number keys 1..7 jump to the matching view. The nav item list has a single
+    // Header at index 0 ("Caddy"), then the 7 views at indices 1..7 in order:
+    // 1 Overview · 2 Routes · 3 TLS/Certs · 4 Upstreams · 5 Raw Config · 6 Snapshots · 7 Topology.
+    // So SelectedIndex == digit (header offset of 1). This handler only fires for the
+    // main window; modal prompts capture their own keys, so digits aren't hijacked.
+    private const int ViewCount = 7;
+
     private void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
+        if (_nav is not null && TryDigit(e.KeyInfo, out int view))
+        {
+            _nav.SelectedIndex = view; // header is index 0, first view is index 1 == digit 1
+            e.Handled = true;
+            return;
+        }
+
         if (_routes.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_certs.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_snapshots.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
@@ -206,6 +225,18 @@ public sealed class DashboardShell
                 e.Handled = true;
                 break;
         }
+    }
+
+    /// <summary>Map D1..D7 / NumPad1..NumPad7 to a 1-based view index. False otherwise.</summary>
+    private static bool TryDigit(ConsoleKeyInfo key, out int view)
+    {
+        view = key.Key switch
+        {
+            >= ConsoleKey.D1 and <= ConsoleKey.D7 => key.Key - ConsoleKey.D1 + 1,
+            >= ConsoleKey.NumPad1 and <= ConsoleKey.NumPad7 => key.Key - ConsoleKey.NumPad1 + 1,
+            _ => 0,
+        };
+        return view is >= 1 and <= ViewCount;
     }
 
     private async Task QuickUndoAsync()

@@ -11,6 +11,7 @@ using LazyCaddy.Configuration;
 using LazyCaddy.Dashboard;
 using LazyCaddy.Models;
 using LazyCaddy.Services;
+using LazyCaddy.UI;
 using LazyCaddy.UI.Modals;
 
 namespace LazyCaddy.Views;
@@ -21,6 +22,7 @@ public sealed class RoutesView
     private readonly EditCoordinator _editor;
 
     private TableControl? _table;
+    private ToolbarControl? _toolbar;
 
     public RoutesView(ConsoleWindowSystem windowSystem, EditCoordinator editor)
     {
@@ -33,24 +35,49 @@ public sealed class RoutesView
     public bool TryHandleKey(ConsoleKeyInfo key)
     {
         if (_table is null || !_table.HasFocus) return false;
-        if (_table.SelectedRow?.Tag is not Route route) return false;
         switch (key.Key)
         {
             case ConsoleKey.E:
-                _ = EditUpstreamDialog.ShowAsync(_windowSystem, route, _editor);
+                EditUpstream();
                 return true;
             case ConsoleKey.M:
-                _ = EditMatcherDialog.ShowAsync(_windowSystem, route, _editor);
+                EditMatcher();
                 return true;
             case ConsoleKey.N:
-                _ = NewRouteWizard.ShowAsync(_windowSystem, _editor, ServerPathFor(route));
+                NewRoute();
                 return true;
             case ConsoleKey.D:
-                _ = DeleteRouteAsync(route);
+                DeleteSelected();
                 return true;
             default:
                 return false;
         }
+    }
+
+    // ── Shared action handlers (invoked by both keys and toolbar buttons) ──
+    // Each reads the currently-selected route at call time and no-ops if none.
+
+    private Route? Selected => _table?.SelectedRow?.Tag as Route;
+
+    private void EditUpstream()
+    {
+        if (Selected is { } route) _ = EditUpstreamDialog.ShowAsync(_windowSystem, route, _editor);
+    }
+
+    private void EditMatcher()
+    {
+        if (Selected is { } route) _ = EditMatcherDialog.ShowAsync(_windowSystem, route, _editor);
+    }
+
+    private void NewRoute()
+    {
+        var server = Selected is { } route ? ServerPathFor(route) : "apps/http/servers/srv0";
+        _ = NewRouteWizard.ShowAsync(_windowSystem, _editor, server);
+    }
+
+    private void DeleteSelected()
+    {
+        if (Selected is { } route) _ = DeleteRouteAsync(route);
     }
 
     // Derive the server path (apps/http/servers/<name>) from a route's ConfigPath.
@@ -77,9 +104,12 @@ public sealed class RoutesView
 
         panel.AddControl(Controls.Markup()
             .AddLine($"[bold {accent}]Routes[/]")
-            .AddLine($"[{muted}]Public host/match → internal upstream. Enter on a row for detail.[/]")
+            .AddLine($"[{muted}]Public host/match → internal upstream. Enter/double-click: edit upstream.[/]")
             .AddEmptyLine()
             .Build());
+
+        _toolbar = ViewToolbar.Create("routesToolbar");
+        panel.AddControl(_toolbar);
 
         _table = Controls.Table()
             .AddColumn("Host / Match", TextJustification.Left)
@@ -99,14 +129,37 @@ public sealed class RoutesView
         // resumes on the UI thread after the await, so touching controls is safe.
         // Resolve the route from the row's Tag (set in Update) rather than the raw
         // index, so it stays correct under the table's own sorting/filtering.
+        // Enter / double-click on a route row opens the primary edit (upstream).
         _table.RowActivatedAsync += async (sender, rowIndex) =>
         {
-            var route = _table?.SelectedRow?.Tag as Route;
-            if (route is null) return;
-            await RouteDetailModal.ShowAsync(_windowSystem, route);
+            if (_table?.SelectedRow?.Tag is Route r)
+                await EditUpstreamDialog.ShowAsync(_windowSystem, r, _editor);
         };
 
+        // Adaptive toolbar: rebuild when the selection changes so context buttons
+        // (Delete) appear/disappear with a selected row.
+        _table.SelectedRowChanged += (_, _) => RebuildToolbar();
+
         panel.AddControl(_table);
+        RebuildToolbar();
+    }
+
+    private void RebuildToolbar()
+    {
+        if (_toolbar is null) return;
+        var hasRow = Selected is not null;
+        var actions = new List<ToolbarAction?>
+        {
+            new(ViewToolbar.Caption("✎", "Edit", "e"), EditUpstream),
+            new(ViewToolbar.Caption("⊞", "Matcher", "m"), EditMatcher),
+            new(ViewToolbar.Caption("⊕", "New", "n"), NewRoute),
+        };
+        if (hasRow)
+        {
+            actions.Add(null); // separator
+            actions.Add(new(ViewToolbar.Caption("✕", "Delete", "d"), DeleteSelected));
+        }
+        ViewToolbar.Rebuild(_toolbar, actions);
     }
 
     public void Update(DashboardState state)
@@ -129,6 +182,7 @@ public sealed class RoutesView
                 Tag = r,
             });
         }
+        RebuildToolbar();
     }
 
     private static string Escape(string s) => s.Replace("[", "[[").Replace("]", "]]");

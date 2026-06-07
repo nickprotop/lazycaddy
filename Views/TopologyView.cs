@@ -36,13 +36,18 @@ public sealed class TopologyView
             .AddLine($"[{muted}]host → reverse_proxy → upstream. Arrows: select/scroll. Health-colored.[/]")
             .AddEmptyLine().Build());
 
+        // AutoSize makes CanvasWidth/Height track the available content area, so the
+        // whole graph (incl. the rightmost upstream column) is in bounds AND the canvas
+        // re-sizes when the terminal resizes. Stretch horizontally to fill the panel.
         _canvas = Controls.Canvas()
+            .AutoSize(true)
+            .WithAlignment(HorizontalAlignment.Stretch)
             .WithVerticalAlignment(VerticalAlignment.Fill)
             .WithName("topologyCanvas")
             .Build();
 
         _canvas.Paint += (_, e) =>
-            TopologyRenderer.Render(e.Graphics, _canvas!.CanvasWidth, _canvas.CanvasHeight,
+            TopologyRenderer.Render(e.Graphics, e.CanvasWidth, e.CanvasHeight,
                 _placed, _edges, _selectedId, _scrollX, _scrollY);
 
         _canvas.CanvasKeyPressed += (_, key) => OnKey(key);
@@ -60,6 +65,9 @@ public sealed class TopologyView
         _selectedId ??= _placed.FirstOrDefault()?.Node.Id;
         _canvas.Invalidate(); // request repaint on the UI thread
     }
+
+    /// <summary>Redraw on terminal resize (driver ScreenResized). Call on the UI thread.</summary>
+    public void HandleResize() => _canvas?.Invalidate();
 
     private void OnKey(System.ConsoleKeyInfo key)
     {
