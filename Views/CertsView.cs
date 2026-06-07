@@ -76,6 +76,8 @@ public sealed class CertsView
             .Build();
 
         _table.SelectedRowChanged += (_, _) => RebuildToolbar();
+        // Enter / double-click on a cert row opens the TLS policy editor (parity with Routes).
+        _table.RowActivatedAsync += async (_, _) => { EditTls(); await Task.CompletedTask; };
 
         panel.AddControl(_table);
         RebuildToolbar();

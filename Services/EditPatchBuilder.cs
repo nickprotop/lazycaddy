@@ -31,6 +31,12 @@ public static class EditPatchBuilder
         return JsonSerializer.Serialize(new object[] { matcher }, Opt);
     }
 
+    /// <summary>JSON for a TLS automation policy that manages the given subjects via
+    /// the default (ACME) issuer — POST this to apps/tls/automation/policies to enable
+    /// automatic HTTPS for those hostnames.</summary>
+    public static string AcmePolicy(IEnumerable<string> subjects)
+        => JsonSerializer.Serialize(new { subjects = subjects.ToArray() }, Opt);
+
     /// <summary>JSON for a complete reverse-proxy route (host -> upstream).</summary>
     public static string ReverseProxyRoute(string host, string upstreamDial)
         => JsonSerializer.Serialize(new

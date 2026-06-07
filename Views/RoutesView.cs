@@ -46,6 +46,9 @@ public sealed class RoutesView
             case ConsoleKey.D:
                 DeleteSelected();
                 return true;
+            case ConsoleKey.H:
+                EnableHttps();
+                return true;
             default:
                 return false;
         }
@@ -70,6 +73,34 @@ public sealed class RoutesView
     private void DeleteSelected()
     {
         if (Selected is { } route) _ = DeleteRouteAsync(route);
+    }
+
+    // Enable automatic HTTPS for the selected route's host by adding it to TLS
+    // automation as a managed subject (Caddy then provisions + renews its cert).
+    // TLS in Caddy is per-hostname (tls.automation), not a per-route flag.
+    private void EnableHttps()
+    {
+        if (Selected is { } route && !route.TlsEnabled) _ = EnableHttpsAsync(route);
+    }
+
+    private async Task EnableHttpsAsync(Route route)
+    {
+        // Take just the hostnames from the matcher summary (drop any path part).
+        var hosts = route.HostOrMatch
+            .Split(' ')[0]
+            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Where(h => h.Contains('.') || h.Contains(':') || !h.StartsWith('/'))
+            .ToArray();
+        if (hosts.Length == 0) return;
+
+        var newJson = EditPatchBuilder.AcmePolicy(hosts);
+        if (!await DiffConfirmDialog.ShowAsync(_windowSystem,
+                $"Enable HTTPS for {string.Join(", ", hosts)}", "(new TLS policy)", newJson))
+            return;
+
+        await _editor.ApplyAsync(
+            (admin, ct) => admin.PostConfigAsync("apps/tls/automation/policies", newJson, ct),
+            $"enable HTTPS for {string.Join(", ", hosts)}");
     }
 
     // Derive the server path (apps/http/servers/<name>) from a route's ConfigPath.
@@ -148,6 +179,9 @@ public sealed class RoutesView
         if (hasRow)
         {
             actions.Add(null); // separator
+            // Offer "Enable HTTPS" only for a route that doesn't already have TLS.
+            if (Selected is { TlsEnabled: false })
+                actions.Add(new(ViewToolbar.Caption("🔒", "Enable HTTPS", "h"), EnableHttps));
             actions.Add(new(ViewToolbar.Caption("✕", "Delete", "d"), DeleteSelected));
         }
         ViewToolbar.Rebuild(_toolbar, actions);
