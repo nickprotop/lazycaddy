@@ -78,7 +78,7 @@ public sealed class HealthChecksForm : ModalBase<bool>
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
         if (e.KeyInfo.Key == ConsoleKey.Escape) { CloseWithResult(false); e.Handled = true; return; }
-        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; _ = ApplyAsync(); }
+        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; RunGuarded(ApplyAsync, Err); }
     }
 
     private async Task ApplyAsync()
@@ -93,7 +93,7 @@ public sealed class HealthChecksForm : ModalBase<bool>
         var passive = new PassiveHealthCheckInput(T(_pFailDur), maxFails, reqCount, badStatus, T(_pLatency));
         var newJson = HandlerPatch.HealthChecks(active, passive);
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply health_checks", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync($"{_path}/health_checks", newJson, ct), "health_checks");
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync($"{_path}/health_checks", newJson, ct), "health_checks");
         if (result.Success) CloseWithResult(true); else Err(result.Error ?? "Write failed.");
     }
 

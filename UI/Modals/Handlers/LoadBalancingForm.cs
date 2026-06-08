@@ -83,7 +83,7 @@ public sealed class LoadBalancingForm : ModalBase<bool>
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
         if (e.KeyInfo.Key == ConsoleKey.Escape) { CloseWithResult(false); e.Handled = true; return; }
-        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; _ = ApplyAsync(); }
+        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; RunGuarded(ApplyAsync, Err); }
     }
 
     private async Task ApplyAsync()
@@ -94,7 +94,7 @@ public sealed class LoadBalancingForm : ModalBase<bool>
         var newJson = HandlerPatch.LoadBalancing(policy, (_param?.Input ?? "").Trim(),
             retries, (_tryDur?.Input ?? "").Trim(), (_tryInt?.Input ?? "").Trim());
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply load_balancing", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync($"{_path}/load_balancing", newJson, ct),
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync($"{_path}/load_balancing", newJson, ct),
             $"load_balancing {(_policy?.SelectedValue ?? "")}");
         if (result.Success) CloseWithResult(true); else Err(result.Error ?? "Write failed.");
     }
