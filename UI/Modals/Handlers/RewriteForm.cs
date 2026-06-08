@@ -35,7 +35,7 @@ public sealed class RewriteForm : ModalBase<bool>
         Modal.AddControl(_method); Modal.AddControl(_uri); Modal.AddControl(_stripPre); Modal.AddControl(_stripSuf);
         _error = Controls.Markup().WithMargin(2, 1, 2, 0).Build(); Modal.AddControl(_error);
         Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Enter: apply   Esc: cancel[/]").WithMargin(2, 0, 2, 0).StickyBottom().Build());
-        _ = LoadAsync();
+        RunGuarded(LoadAsync, Err);
     }
 
     private async Task LoadAsync()
@@ -59,7 +59,7 @@ public sealed class RewriteForm : ModalBase<bool>
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
         if (e.KeyInfo.Key == ConsoleKey.Escape) { CloseWithResult(false); e.Handled = true; return; }
-        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; _ = ApplyAsync(); }
+        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; RunGuarded(ApplyAsync, Err); }
     }
 
     private async Task ApplyAsync()

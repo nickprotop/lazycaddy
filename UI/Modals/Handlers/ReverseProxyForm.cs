@@ -37,7 +37,7 @@ public sealed class ReverseProxyForm : ModalBase<bool>
         Modal.AddControl(_upstreams); Modal.AddControl(_stream);
         _error = Controls.Markup().WithMargin(2, 1, 2, 0).Build(); Modal.AddControl(_error);
         Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Enter: apply upstreams   l: load balancing   c: health checks   t: transport   h: headers   Esc: cancel[/]").WithMargin(2, 0, 2, 0).StickyBottom().Build());
-        _ = LoadAsync();
+        RunGuarded(LoadAsync, Err);
     }
 
     private async Task LoadAsync()
@@ -69,7 +69,7 @@ public sealed class ReverseProxyForm : ModalBase<bool>
         if (e.KeyInfo.Key == ConsoleKey.C) { e.Handled = true; _ = HealthChecksForm.ShowAsync(WindowSystem, _path, _editor, Modal); return; }
         if (e.KeyInfo.Key == ConsoleKey.T) { e.Handled = true; _ = HttpTransportForm.ShowAsync(WindowSystem, _path, _editor, Modal); return; }
         if (e.KeyInfo.Key == ConsoleKey.H) { e.Handled = true; _ = HeadersForm.ShowAsync(WindowSystem, $"{_path}/headers", _editor, Modal); return; }
-        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; _ = ApplyAsync(); }
+        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; RunGuarded(ApplyAsync, Err); }
     }
 
     private async Task ApplyAsync()

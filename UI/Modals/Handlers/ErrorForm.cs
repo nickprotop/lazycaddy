@@ -33,7 +33,7 @@ public sealed class ErrorForm : ModalBase<bool>
         Modal.AddControl(_msg); Modal.AddControl(_status);
         _error = Controls.Markup().WithMargin(2, 1, 2, 0).Build(); Modal.AddControl(_error);
         Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Enter: apply   Esc: cancel[/]").WithMargin(2, 0, 2, 0).StickyBottom().Build());
-        _ = LoadAsync();
+        RunGuarded(LoadAsync, m => _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]{m.Replace("[", "[[").Replace("]", "]]")}[/]" }));
     }
 
     private async Task LoadAsync()
@@ -56,7 +56,7 @@ public sealed class ErrorForm : ModalBase<bool>
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
         if (e.KeyInfo.Key == ConsoleKey.Escape) { CloseWithResult(false); e.Handled = true; return; }
-        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; _ = ApplyAsync(); }
+        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; RunGuarded(ApplyAsync, m => _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]{m.Replace("[", "[[").Replace("]", "]]")}[/]" })); }
     }
 
     private async Task ApplyAsync()

@@ -33,7 +33,7 @@ public sealed class VarsForm : ModalBase<bool>
             .WithVerticalScrollbar(ScrollbarVisibility.Auto).WithMargin(2, 1, 2, 0).Build();
         Modal.AddControl(_edit);
         _error = Controls.Markup().WithMargin(2, 0, 2, 0).StickyBottom().Build(); Modal.AddControl(_error);
-        _ = LoadAsync();
+        RunGuarded(LoadAsync, Err);
     }
 
     private async Task LoadAsync()
@@ -55,7 +55,7 @@ public sealed class VarsForm : ModalBase<bool>
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
         if (e.KeyInfo.Key == ConsoleKey.Escape) { CloseWithResult(false); e.Handled = true; return; }
-        if (e.KeyInfo.Key == ConsoleKey.S && (e.KeyInfo.Modifiers & ConsoleModifiers.Control) != 0) { e.Handled = true; _ = ApplyAsync(); }
+        if (e.KeyInfo.Key == ConsoleKey.S && (e.KeyInfo.Modifiers & ConsoleModifiers.Control) != 0) { e.Handled = true; RunGuarded(ApplyAsync, Err); }
     }
 
     private async Task ApplyAsync()

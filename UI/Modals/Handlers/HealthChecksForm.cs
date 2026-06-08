@@ -40,7 +40,7 @@ public sealed class HealthChecksForm : ModalBase<bool>
         foreach (var c in new[] { _pFailDur, _pMaxFails, _pReqCount, _pStatus, _pLatency }) Modal.AddControl(c);
         _error = Controls.Markup().WithMargin(2, 0, 2, 0).Build(); Modal.AddControl(_error);
         Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Enter: apply   Esc: cancel   (durations like 10s, 250ms)[/]").WithMargin(2, 0, 2, 0).StickyBottom().Build());
-        _ = LoadAsync();
+        RunGuarded(LoadAsync, Err);
     }
 
     private PromptControl P(string label) => Controls.Prompt(label).WithInputWidth(40).Build();
