@@ -68,7 +68,7 @@ public sealed class EditRouteDialog : ModalBase<bool>
             .AddLine($"[{muted}]Enter: review & apply   Esc: cancel[/]")
             .WithMargin(2, 0, 2, 0).StickyBottom().Build());
 
-        _ = LoadCurrentAsync();
+        RunGuarded(LoadCurrentAsync, ShowError);
     }
 
     /// <summary>Read the live match + terminal nodes to pre-fill the form precisely
