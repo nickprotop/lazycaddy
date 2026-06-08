@@ -203,8 +203,17 @@ public sealed class ServerView
 
     private async Task OpenLogAsync(string logName)
     {
-        var changed = await LogOutputDialog.ShowAsync(_ws, logName, _editor);
-        if (changed) _onRefresh();
+        // Fire-and-forget from the key handler — own the try/catch (views aren't ModalBase),
+        // matching ApplyAsync, so a failure surfaces to the status line instead of going unobserved.
+        try
+        {
+            var changed = await LogOutputDialog.ShowAsync(_ws, logName, _editor);
+            if (changed) _onRefresh();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"[{UIConstants.Bad.ToMarkup()}]{Escape(ex.Message)}[/]");
+        }
     }
 
     private bool HasAnyFocus() =>
