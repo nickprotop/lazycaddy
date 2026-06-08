@@ -80,7 +80,7 @@ public sealed class RawNodeEditDialog : ModalBase<bool>
         if (_edit is null) return;
         var newJson = _edit.GetContent();
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, $"Apply {_path}", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync(_path, newJson, ct), $"raw edit {_path}");
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), $"raw edit {_path}");
         if (result.Success) CloseWithResult(true);
         else ShowError(result.Error ?? "Write failed.");
     }
