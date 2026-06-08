@@ -1,0 +1,1 @@
+{ "match": [ { "host": ["example.com"] } ], "handle": [ { "handler": "subroute", "routes": [ { "handle": [ { "handler": "reverse_proxy", "upstreams": [ { "dial": "127.0.0.1:8090" } ] } ] } ] } ], "terminal": true }
