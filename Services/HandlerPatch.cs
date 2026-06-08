@@ -35,6 +35,13 @@ public sealed record KeepAliveInput(
     bool EnabledSet, bool Enabled, string IdleTimeout, string ProbeInterval,
     int MaxIdleConns, int MaxIdleConnsPerHost);
 
+public sealed record BrowseInput(
+    string TemplateFile, bool RevealSymlinks, IReadOnlyList<string> Sort, int FileLimit);
+
+public sealed record FileServerInput(
+    string Root, IReadOnlyList<string> IndexNames, IReadOnlyList<string> Hide, bool PassThru,
+    IReadOnlyList<string> PrecompressedOrder, string StatusCode, bool CanonicalUrisSet, bool CanonicalUris);
+
 public static class HandlerPatch
 {
     private static readonly JsonSerializerOptions Opt = new() { WriteIndented = true };
@@ -50,6 +57,39 @@ public static class HandlerPatch
         if (hd.Length > 0) o["hide"] = hd;
         if (browse) o["browse"] = new Dictionary<string, object>();
         if (passThru) o["pass_thru"] = true;
+        return JsonSerializer.Serialize(o, Opt);
+    }
+
+    public static readonly IReadOnlySet<string> ManagedFileServerKeys = new HashSet<string>
+    {
+        "handler", "root", "index_names", "hide", "pass_thru",
+        "precompressed_order", "status_code", "canonical_uris"
+    };
+
+    public static string FileServer(FileServerInput x)
+    {
+        var o = new Dictionary<string, object> { ["handler"] = "file_server" };
+        if (!string.IsNullOrWhiteSpace(x.Root)) o["root"] = x.Root;
+        var idx = x.IndexNames.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        if (idx.Length > 0) o["index_names"] = idx;
+        var hd = x.Hide.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        if (hd.Length > 0) o["hide"] = hd;
+        if (x.PassThru) o["pass_thru"] = true;
+        var pre = x.PrecompressedOrder.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        if (pre.Length > 0) o["precompressed_order"] = pre;
+        if (!string.IsNullOrWhiteSpace(x.StatusCode)) o["status_code"] = x.StatusCode;
+        if (x.CanonicalUrisSet) o["canonical_uris"] = x.CanonicalUris;
+        return JsonSerializer.Serialize(o, Opt);
+    }
+
+    public static string Browse(BrowseInput x)
+    {
+        var o = new Dictionary<string, object>();
+        if (!string.IsNullOrWhiteSpace(x.TemplateFile)) o["template_file"] = x.TemplateFile;
+        if (x.RevealSymlinks) o["reveal_symlinks"] = true;
+        var sort = x.Sort.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        if (sort.Length > 0) o["sort"] = sort;
+        if (x.FileLimit > 0) o["file_limit"] = x.FileLimit;
         return JsonSerializer.Serialize(o, Opt);
     }
 
