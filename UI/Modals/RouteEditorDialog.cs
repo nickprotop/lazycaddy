@@ -96,22 +96,10 @@ public sealed class RouteEditorDialog : ModalBase<bool>
         if (changed) await LoadAsync(); // refresh summaries after an edit
     }
 
-    private Task<bool> OpenFormFor(HandlerDescriptor d) => d.Type switch
-    {
-        "file_server"     => FileServerForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
-        "static_response" => StaticResponseForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
-        "error"           => ErrorForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
-        "rewrite"         => RewriteForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
-        "headers"         => HeadersForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
-        "encode"          => EncodeForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
-        "vars"            => VarsForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
-        "request_body"    => RequestBodyForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
-        "reverse_proxy"   => ReverseProxyForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
-        "templates"       => TemplatesForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
-        "authentication"  => AuthenticationForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
-        "subroute"        => DrillIntoSubrouteAsync(d),
-        _                 => RawNodeEditDialog.ShowAsync(WindowSystem, $"Edit {d.Type}", d.ConfigPath, _editor, Modal),
-    };
+    private Task<bool> OpenFormFor(HandlerDescriptor d) =>
+        d.Type == "subroute"
+            ? DrillIntoSubrouteAsync(d)
+            : HandlerFormDispatch.OpenAsync(WindowSystem, d.Type, d.ConfigPath, _editor, Modal);
 
     private async Task<bool> DrillIntoSubrouteAsync(HandlerDescriptor d)
     {
