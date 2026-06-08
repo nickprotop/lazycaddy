@@ -89,9 +89,15 @@ public sealed class RouteEditModal : ModalBase<bool>
         try { descriptors = RouteModel.ParseHandlers(_route.RawConfigJson, _route.ConfigPath); }
         catch { return list; }
 
+        // Build a tab for EVERY real handler — top-level OR nested inside a subroute (the common
+        // Caddyfile shape wraps a route's handlers in a subroute, so the reverse_proxy is at
+        // Depth>0). ParseHandlers already yields each with its full nested ConfigPath, and the
+        // editors are path-driven, so nested handlers' sub-node paths (e.g. {p}/health_checks,
+        // {p}/transport/tls, {p}/upstreams/{i}) compose correctly. Only the subroute CONTAINER
+        // itself has no editor — skip it; its nested handlers come through as their own descriptors.
         foreach (var d in descriptors)
         {
-            if (d.Depth != 0) continue; // only top-level handlers; subroute children are skipped
+            if (d.Type == "subroute") continue; // container, not an editable leaf; its children follow
             var p = d.ConfigPath;
             switch (d.Type)
             {
@@ -136,8 +142,7 @@ public sealed class RouteEditModal : ModalBase<bool>
                 case "authentication":
                     list.Add(new AuthenticationEditor(p));                     // editor appends /providers
                     break;
-                // subroute: nested handler editing is out of scope for this modal — skip.
-                // unknown handler types: skip (don't crash).
+                // unknown handler types: skip (don't crash). subroute is filtered above.
                 default:
                     break;
             }
