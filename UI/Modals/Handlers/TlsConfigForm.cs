@@ -79,9 +79,10 @@ public sealed class TlsConfigForm : ModalBase<bool>
     {
         var input = new TlsConfigInput(_insecure?.Checked ?? false, (_serverName?.Input ?? "").Trim(),
             (_reneg?.Input ?? "").Trim(), (_handshake?.Input ?? "").Trim(), Csv(_curves), Csv(_exceptPorts));
-        var newJson = HandlerPatch.TlsConfig(input);
-        if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply transport TLS", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), "transport tls");
+        var managedJson = HandlerPatch.TlsConfig(input);
+        var merged = HandlerPatch.MergeTlsConfig(_original, managedJson);
+        if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply transport TLS", _original, merged, Modal)) return;
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, merged, ct), "transport tls");
         if (result.Success) CloseWithResult(true); else Err(result.Error ?? "Write failed.");
     }
 

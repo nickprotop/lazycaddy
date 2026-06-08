@@ -251,14 +251,21 @@ public static class HandlerPatch
         "local_address", "proxy_protocol", "resolver",
     };
 
+    /// <summary>Top-level keys the TlsConfig builder can emit; everything else is preserved on merge.</summary>
+    private static readonly HashSet<string> ManagedTlsKeys = new(StringComparer.Ordinal)
+    {
+        "insecure_skip_verify", "server_name", "renegotiation", "handshake_timeout", "curves", "except_ports",
+    };
+
     /// <summary>
-    /// Merge freshly-built managed transport JSON over the original transport node, preserving
-    /// any keys the builder does not manage (tls, keep_alive, network_proxy, etc). Caddy PATCH
-    /// replaces an object node wholesale, so we must carry unmanaged sub-nodes forward ourselves.
-    /// Managed keys reflect the user's current form state (cleared fields are intentionally omitted);
-    /// only keys absent from the managed key set are copied verbatim from the original.
+    /// Merge freshly-built managed JSON over the original node, preserving any top-level key the
+    /// builder does not manage. Caddy PATCH replaces an object node wholesale, so unmanaged keys
+    /// (polymorphic blocks, advanced fields left to raw edit) must be carried forward explicitly.
+    /// Managed keys take their value from <paramref name="managedJson"/> (so a field cleared in the
+    /// form is dropped, not resurrected). Falls back to managedJson when original is empty/absent/
+    /// non-object/unparseable.
     /// </summary>
-    public static string MergeTransport(string originalJson, string managedJson)
+    public static string MergeUnmanaged(string originalJson, string managedJson, IReadOnlySet<string> managedKeys)
     {
         if (string.IsNullOrWhiteSpace(originalJson)) return managedJson;
         JsonNode? originalNode;
@@ -269,11 +276,28 @@ public static class HandlerPatch
 
         foreach (var kvp in original)
         {
-            if (ManagedTransportKeys.Contains(kvp.Key)) continue;
+            if (managedKeys.Contains(kvp.Key)) continue;
             managed[kvp.Key] = kvp.Value?.DeepClone();
         }
         return JsonSerializer.Serialize(managed, Opt);
     }
+
+    /// <summary>
+    /// Merge freshly-built managed transport JSON over the original transport node, preserving
+    /// any keys the builder does not manage (tls, keep_alive, network_proxy, etc). Caddy PATCH
+    /// replaces an object node wholesale, so we must carry unmanaged sub-nodes forward ourselves.
+    /// Managed keys reflect the user's current form state (cleared fields are intentionally omitted);
+    /// only keys absent from the managed key set are copied verbatim from the original.
+    /// </summary>
+    public static string MergeTransport(string originalJson, string managedJson)
+        => MergeUnmanaged(originalJson, managedJson, ManagedTransportKeys);
+
+    /// <summary>
+    /// Merge freshly-built managed tls JSON over the original tls node, preserving unmanaged keys
+    /// (the polymorphic `ca` block, client-certificate fields left to raw edit, etc).
+    /// </summary>
+    public static string MergeTlsConfig(string originalJson, string managedJson)
+        => MergeUnmanaged(originalJson, managedJson, ManagedTlsKeys);
 
     public static string TlsConfig(TlsConfigInput x)
     {

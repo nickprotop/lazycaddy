@@ -158,4 +158,36 @@ public class HandlerPatchD2Tests
         Assert.Equal(managed, HandlerPatch.MergeTransport("", managed));
         Assert.Equal(managed, HandlerPatch.MergeTransport(null!, managed));
     }
+
+    [Fact]
+    public void MergeTlsConfig_PreservesCaAndClientCert()
+    {
+        var original = """{"server_name":"old","ca":{"provider":"x"},"client_certificate_file":"/c.pem"}""";
+        var managed = """{"server_name":"new","insecure_skip_verify":true}""";
+        var r = Parse(HandlerPatch.MergeTlsConfig(original, managed));
+        Assert.Equal("new", r.GetProperty("server_name").GetString());
+        Assert.True(r.GetProperty("insecure_skip_verify").GetBoolean());
+        Assert.Equal("x", r.GetProperty("ca").GetProperty("provider").GetString());
+        Assert.Equal("/c.pem", r.GetProperty("client_certificate_file").GetString());
+    }
+
+    [Fact]
+    public void MergeTlsConfig_ManagedKeyClearedNotResurrected()
+    {
+        var original = """{"server_name":"old","ca":{"p":1}}""";
+        var managed = "{}";
+        var r = Parse(HandlerPatch.MergeTlsConfig(original, managed));
+        Assert.False(r.TryGetProperty("server_name", out _));
+        Assert.Equal(1, r.GetProperty("ca").GetProperty("p").GetInt32());
+    }
+
+    [Fact]
+    public void MergeUnmanaged_NonObjectOriginal_ReturnsManaged()
+    {
+        var managed = """{"server_name":"new"}""";
+        var keys = new HashSet<string> { "server_name" };
+        Assert.Equal(
+            JsonSerializer.Serialize(Parse(managed)),
+            JsonSerializer.Serialize(Parse(HandlerPatch.MergeUnmanaged("null", managed, keys))));
+    }
 }
