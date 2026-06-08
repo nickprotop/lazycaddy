@@ -1,59 +1,63 @@
+// -----------------------------------------------------------------------
+// LazyCaddy - HeadersEditor: a headers node (a standalone headers handler OR a
+// reverse_proxy's `/headers`) as a tab in the consolidated route modal. Ported
+// from HeadersForm's load (OpsToLines) + patch-build (ParseOps → HandlerPatch.
+// Headers) — modal-wrapper dropped, the modal owns a single batched apply.
+//
+// The ctor takes the FULL node path. No merge — the form patched the whole node.
+// Ctrl+S apply is now the modal's job, so HandleKey returns false.
+// -----------------------------------------------------------------------
+
 using System.Text.Json;
-using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
 using SharpConsoleUI.Layout;
 using LazyCaddy.Configuration;
 using LazyCaddy.Services;
 
-namespace LazyCaddy.UI.Modals.Handlers;
+namespace LazyCaddy.UI.Editors;
 
-public sealed class HeadersForm : ModalBase<bool>
+public sealed class HeadersEditor : IConfigEditor
 {
     private readonly string _path;
-    private readonly EditCoordinator _editor;
     private MultilineEditControl? _req, _resp, _reqHeaders;
     private PromptControl? _reqStatus;
-    private MarkupControl? _error;
+    private Action? _onDirty;
     private string _original = "{}";
 
-    private HeadersForm(string path, EditCoordinator editor) { _path = path; _editor = editor; }
+    private string _lReq = "", _lResp = "", _lReqStatus = "", _lReqHeaders = "";
 
-    public static Task<bool> ShowAsync(ConsoleWindowSystem ws, string path, EditCoordinator editor, Window? parent = null)
-        => ((ModalBase<bool>)new HeadersForm(path, editor)).ShowAsync(ws, parent);
+    public HeadersEditor(string path) => _path = path;
 
-    protected override string GetTitle() => " Edit headers ";
-    protected override (int width, int height) GetSize() => (80, 28);
-    protected override bool GetDefaultResult() => false;
+    public string TabTitle => "Headers";
+    public string ConfigPath => _path;
 
-    protected override void BuildContent()
+    public void Build(ScrollablePanelControl container, Action onDirtyChanged)
     {
+        _onDirty = onDirtyChanged;
         var muted = UIConstants.MutedText.ToMarkup();
-        Modal.AddControl(Controls.Markup()
+        container.AddControl(Controls.Markup()
             .AddLine($"[{muted}]One op per line: 'set Name: value' · 'add Name: value' · 'del Name'.[/]")
             .AddLine($"[{muted}]replace Name: a => b   ·   replace ~Name: regex => b[/]")
-            .AddLine($"[{muted}]Ctrl+S apply · Esc cancel.[/]")
             .WithMargin(2, 1, 2, 0).Build());
-        Modal.AddControl(Controls.Markup().AddLine($"[{UIConstants.Accent.ToMarkup()}]Request:[/]").WithMargin(2, 0, 2, 0).Build());
+        container.AddControl(Controls.Markup().AddLine($"[{UIConstants.Accent.ToMarkup()}]Request:[/]").WithMargin(2, 0, 2, 0).Build());
         _req = Controls.MultilineEdit("").NoWrap().WithViewportHeight(5).WithVerticalScrollbar(ScrollbarVisibility.Auto).WithMargin(2, 0, 2, 0).Build();
-        Modal.AddControl(_req);
-        Modal.AddControl(Controls.Markup().AddLine($"[{UIConstants.Accent.ToMarkup()}]Response:[/]").WithMargin(2, 0, 2, 0).Build());
+        container.AddControl(_req);
+        container.AddControl(Controls.Markup().AddLine($"[{UIConstants.Accent.ToMarkup()}]Response:[/]").WithMargin(2, 0, 2, 0).Build());
         _resp = Controls.MultilineEdit("").NoWrap().WithViewportHeight(5).WithVerticalScrollbar(ScrollbarVisibility.Auto).WithMargin(2, 0, 2, 0).Build();
-        Modal.AddControl(_resp);
-        Modal.AddControl(Controls.Markup().AddLine($"[{UIConstants.Accent.ToMarkup()}]Response require:[/]").WithMargin(2, 0, 2, 0).Build());
+        container.AddControl(_resp);
+        container.AddControl(Controls.Markup().AddLine($"[{UIConstants.Accent.ToMarkup()}]Response require:[/]").WithMargin(2, 0, 2, 0).Build());
         _reqStatus = Controls.Prompt("Require status: ").WithInputWidth(44).WithMargin(2, 0, 2, 0).Build();
-        Modal.AddControl(_reqStatus);
+        container.AddControl(_reqStatus);
         _reqHeaders = Controls.MultilineEdit("").NoWrap().WithViewportHeight(2).WithVerticalScrollbar(ScrollbarVisibility.Auto).WithMargin(2, 0, 2, 0).Build();
-        Modal.AddControl(_reqHeaders);
-        _error = Controls.Markup().WithMargin(2, 0, 2, 0).StickyBottom().Build(); Modal.AddControl(_error);
-        RunGuarded(LoadAsync, Err);
+        container.AddControl(_reqHeaders);
     }
 
-    private async Task LoadAsync()
+    public async Task LoadAsync(EditCoordinator editor)
     {
         try
         {
-            _original = await _editor.GetConfigNodeAsync(_path);
+            _original = await editor.GetConfigNodeAsync(_path);
             using var d = JsonDocument.Parse(_original); var r = d.RootElement;
             _req?.SetContent(OpsToLines(r, "request"));
             _resp?.SetContent(OpsToLines(r, "response"));
@@ -67,8 +71,11 @@ public sealed class HeadersForm : ModalBase<bool>
                         $"{p.Name}: {(p.Value.ValueKind == JsonValueKind.Array && p.Value.GetArrayLength() > 0 ? p.Value[0].GetString() : "")}")));
             }
         }
-        catch (JsonException ex) { Err($"Could not parse headers node: {ex.Message}"); }
-        catch { }
+        catch (JsonException) { /* leave defaults */ }
+        catch { /* node absent (404)/network → leave defaults */ }
+
+        CaptureLoaded();
+        _onDirty?.Invoke();
     }
 
     private static string OpsToLines(JsonElement root, string dir)
@@ -96,12 +103,6 @@ public sealed class HeadersForm : ModalBase<bool>
                         lines.Add($"replace {(isRegex ? "~" : "")}{h.Name}: {search} => {repl}");
                     }
         return string.Join("\n", lines);
-    }
-
-    protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
-    {
-        if (e.KeyInfo.Key == ConsoleKey.Escape) { CloseWithResult(false); e.Handled = true; return; }
-        if (e.KeyInfo.Key == ConsoleKey.S && (e.KeyInfo.Modifiers & ConsoleModifiers.Control) != 0) { e.Handled = true; RunGuarded(ApplyAsync, Err); }
     }
 
     private static HeaderOpsInput ParseOps(string text)
@@ -142,20 +143,35 @@ public sealed class HeadersForm : ModalBase<bool>
         return new HeaderOpsInput(add, set, del, replace);
     }
 
-    private async Task ApplyAsync()
+    private void CaptureLoaded()
     {
+        _lReq = _req?.GetContent() ?? ""; _lResp = _resp?.GetContent() ?? "";
+        _lReqStatus = _reqStatus?.Input ?? ""; _lReqHeaders = _reqHeaders?.GetContent() ?? "";
+    }
+
+    public bool IsDirty =>
+        (_req?.GetContent() ?? "") != _lReq || (_resp?.GetContent() ?? "") != _lResp ||
+        (_reqStatus?.Input ?? "") != _lReqStatus || (_reqHeaders?.GetContent() ?? "") != _lReqHeaders;
+
+    public IReadOnlyList<PendingWrite> BuildPatch()
+    {
+        if (!IsDirty) return Array.Empty<PendingWrite>();
         var codes = (_reqStatus?.Input ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .Select(s => int.TryParse(s, out var n) ? n : 0).Where(n => n > 0).ToArray();
         var reqHeaders = new List<(string, string)>();
         foreach (var raw in (_reqHeaders?.GetContent() ?? "").Split('\n'))
         { var l = raw.Trim(); var c = l.IndexOf(':'); if (c > 0) reqHeaders.Add((l[..c].Trim(), l[(c + 1)..].Trim())); }
         ResponseRequireInput? require = (codes.Length > 0 || reqHeaders.Count > 0) ? new ResponseRequireInput(codes, reqHeaders) : null;
+        // No merge — the form patched the whole headers node.
         var newJson = HandlerPatch.Headers(ParseOps(_req?.GetContent() ?? ""), ParseOps(_resp?.GetContent() ?? ""), require);
-        if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply headers", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), $"headers {_path}");
-        if (result.Success) CloseWithResult(true); else Err(result.Error ?? "Write failed.");
+        return new[] { new PendingWrite(ConfigPath, newJson, _original, "headers") };
     }
 
-    private void Err(string m) =>
-        _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]{m.Replace("[", "[[").Replace("]", "]]")}[/]" });
+    public void Revert()
+    {
+        _req?.SetContent(_lReq); _resp?.SetContent(_lResp);
+        _reqStatus?.SetInput(_lReqStatus); _reqHeaders?.SetContent(_lReqHeaders);
+    }
+
+    public bool HandleKey(ConsoleKeyInfo key) => false;
 }

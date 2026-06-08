@@ -9,6 +9,12 @@ using LazyCaddy.Models;
 
 namespace LazyCaddy.Services;
 
+/// <summary>Outcome of a batched apply: how many writes landed, and the first failure (if any).</summary>
+public readonly record struct BatchResult(int Applied, int Total, string? FailedLabel, string? Error)
+{
+    public bool AllSucceeded => Applied == Total && Error is null;
+}
+
 public sealed class EditCoordinator
 {
     private readonly ICaddyAdmin _admin;
@@ -48,6 +54,32 @@ public sealed class EditCoordinator
             return WriteResult.Fail($"Could not snapshot before edit: {ex.Message}");
         }
         return await write(_admin, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Snapshot the current config ONCE, then apply each write via Upsert in order, stopping
+    /// at the first failure (prior writes stay applied). For the consolidated modal's single Apply.</summary>
+    public async Task<BatchResult> ApplyBatchAsync(IReadOnlyList<PendingWrite> writes, string label, CancellationToken ct = default)
+    {
+        if (_config.ReadOnly) return new BatchResult(0, writes.Count, null, "Editing is disabled (read-only mode).");
+        if (writes.Count == 0) return new BatchResult(0, 0, null, null);
+        try
+        {
+            var current = await _admin.GetRawConfigAsync(ct).ConfigureAwait(false);
+            _snapshots.Capture(current, label);
+        }
+        catch (Exception ex)
+        {
+            return new BatchResult(0, writes.Count, null, $"Could not snapshot before edit: {ex.Message}");
+        }
+
+        int applied = 0;
+        foreach (var w in writes)
+        {
+            var r = await _admin.UpsertConfigAsync(w.Path, w.Json, ct).ConfigureAwait(false);
+            if (!r.Success) return new BatchResult(applied, writes.Count, w.Label, r.Error ?? "write failed");
+            applied++;
+        }
+        return new BatchResult(applied, writes.Count, null, null);
     }
 
     /// <summary>Restore a snapshot's config via POST /load (snapshotting current first).</summary>

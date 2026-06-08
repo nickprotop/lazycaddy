@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------
 // LazyCaddy - guided "new route" wizard: collect a host(+path) matcher and a
-// handler type, create a minimal valid route, then open the matching handler
-// form so the user fills in details. Reuses every handler form via dispatch.
+// handler type, create a minimal valid route, then open the consolidated
+// RouteEditModal on the new route so the user fills in details across tabs.
 // -----------------------------------------------------------------------
 
 using System.Text.Json;
@@ -9,6 +9,7 @@ using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
 using LazyCaddy.Configuration;
+using LazyCaddy.Models;
 using LazyCaddy.Services;
 
 namespace LazyCaddy.UI.Modals;
@@ -96,12 +97,26 @@ public sealed class NewRouteWizard : ModalBase<bool>
         }
         catch { newIndex = 0; }
 
-        // Open the matching handler form WHILE this wizard is still open, parented to its live
-        // Modal (the established pattern — see RouteEditorDialog.EditSelectedAsync). Closing the
-        // wizard first would orphan the form on a closed window. The route already exists, so if
-        // the user cancels the form the minimal-but-valid route remains.
-        var handlerPath = $"{_serverPath}/routes/{newIndex}/handle/0";
-        await HandlerFormDispatch.OpenAsync(WindowSystem, NewRouteSkeleton.FormType(chosen), handlerPath, _editor, Modal);
+        // Open the consolidated RouteEditModal on the new route WHILE this wizard is still open,
+        // parented to its live Modal — closing the wizard first would orphan the modal on a closed
+        // window. The route already exists, so if the user cancels the modal the minimal-but-valid
+        // route remains.
+        //
+        // RouteEditModal only really needs ConfigPath + RawConfigJson (for tab assembly) and
+        // HostOrMatch (the title). We re-GET the just-created route node for RawConfigJson and
+        // build a minimal Route; Upstream/TlsEnabled/Status are best-effort (unused by the modal).
+        var routePath = $"{_serverPath}/routes/{newIndex}";
+        string rawJson;
+        try { rawJson = await _editor.GetConfigNodeAsync(routePath); }
+        catch { rawJson = routeJson; } // fall back to the JSON we POSTed
+        var newRoute = new Route(
+            HostOrMatch: hostLabel,
+            Upstream: "",
+            TlsEnabled: false,
+            Status: "",
+            RawConfigJson: rawJson,
+            ConfigPath: routePath);
+        await RouteEditModal.ShowAsync(WindowSystem, newRoute, _editor, Modal);
         CloseWithResult(true);
     }
 
