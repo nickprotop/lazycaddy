@@ -113,4 +113,22 @@ public static class HandlerPatch
         if (maxSize > 0) o["max_size"] = maxSize;
         return JsonSerializer.Serialize(o, Opt);
     }
+
+    public static string Templates(string fileRoot, IEnumerable<string> mimeTypes)
+    {
+        var o = new Dictionary<string, object> { ["handler"] = "templates" };
+        if (!string.IsNullOrWhiteSpace(fileRoot)) o["file_root"] = fileRoot;
+        var mt = mimeTypes.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        if (mt.Length > 0) o["mime_types"] = mt;
+        return JsonSerializer.Serialize(o, Opt);
+    }
+
+    public static string ReverseProxy(IEnumerable<string> dials, int flushInterval)
+    {
+        var o = new Dictionary<string, object> { ["handler"] = "reverse_proxy" };
+        var ups = dials.Where(s => !string.IsNullOrWhiteSpace(s)).Select(d => new { dial = d }).ToArray();
+        if (ups.Length > 0) o["upstreams"] = ups;
+        if (flushInterval != 0) o["flush_interval"] = flushInterval;
+        return JsonSerializer.Serialize(o, Opt);
+    }
 }

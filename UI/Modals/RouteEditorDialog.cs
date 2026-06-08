@@ -3,6 +3,7 @@
 // chain. Each handler opens a type-specific form, or the raw node editor.
 // -----------------------------------------------------------------------
 
+using System.Text.Json;
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
@@ -100,9 +101,47 @@ public sealed class RouteEditorDialog : ModalBase<bool>
         "encode"          => EncodeForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
         "vars"            => VarsForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
         "request_body"    => RequestBodyForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
-        // No dedicated form yet (reverse_proxy/subroute/templates/auth) → raw node editor.
+        "reverse_proxy"   => ReverseProxyForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
+        "templates"       => TemplatesForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
+        "authentication"  => AuthenticationForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
+        "subroute"        => DrillIntoSubrouteAsync(d),
         _                 => RawNodeEditDialog.ShowAsync(WindowSystem, $"Edit {d.Type}", d.ConfigPath, _editor, Modal),
     };
+
+    private async Task<bool> DrillIntoSubrouteAsync(HandlerDescriptor d)
+    {
+        // Read the subroute's nested routes and let the user pick one to edit.
+        string subJson;
+        try { subJson = await _editor.GetConfigNodeAsync($"{d.ConfigPath}/routes"); }
+        catch { return await RawNodeEditDialog.ShowAsync(WindowSystem, "Edit subroute", d.ConfigPath, _editor, Modal); }
+
+        using var doc = JsonDocument.Parse(subJson);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array || doc.RootElement.GetArrayLength() == 0)
+            return await RawNodeEditDialog.ShowAsync(WindowSystem, "Edit subroute", d.ConfigPath, _editor, Modal);
+
+        // For each nested route, derive a display label + its config path, and open a picker.
+        var children = new List<Route>();
+        int n = 0;
+        foreach (var rn in doc.RootElement.EnumerateArray())
+        {
+            var label = NestedRouteLabel(rn, n);
+            children.Add(new Route(label, "", false, "active", "{}", $"{d.ConfigPath}/routes/{n}"));
+            n++;
+        }
+        // If exactly one nested route, drill straight in; else show a small picker dialog.
+        var pick = children.Count == 1 ? children[0]
+            : await SubroutePickerDialog.ShowPickAsync(WindowSystem, children, Modal);
+        if (pick is null) return false;
+        return await RouteEditorDialog.ShowAsync(WindowSystem, pick, _editor, Modal);
+    }
+
+    private static string NestedRouteLabel(JsonElement route, int idx)
+    {
+        if (route.TryGetProperty("match", out var m) && m.ValueKind == JsonValueKind.Array && m.GetArrayLength() > 0
+            && m[0].TryGetProperty("host", out var h) && h.ValueKind == JsonValueKind.Array && h.GetArrayLength() > 0)
+            return h[0].GetString() ?? $"route {idx}";
+        return $"route {idx}";
+    }
 
     private async Task EditMatchAsync()
     {
