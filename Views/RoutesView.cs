@@ -46,6 +46,9 @@ public sealed class RoutesView
             case ConsoleKey.D:
                 DeleteSelected();
                 return true;
+            case ConsoleKey.M:
+                ManageHandlers();
+                return true;
             case ConsoleKey.H:
                 if (Selected is { TlsEnabled: true }) DisableHttps();
                 else EnableHttps();
@@ -74,6 +77,20 @@ public sealed class RoutesView
     private void DeleteSelected()
     {
         if (Selected is { } route) _ = DeleteRouteAsync(route);
+    }
+
+    // Open the handler-chain manager for the selected route. If the user adds a handler there,
+    // the modal closes and we open the route editor so the new (minimal) handler gets configured.
+    private void ManageHandlers()
+    {
+        if (Selected is { } route) _ = ManageHandlersAsync(route);
+    }
+
+    private async Task ManageHandlersAsync(Route route)
+    {
+        var added = await HandlersModal.ShowAsync(_windowSystem, route, _editor);
+        if (added)
+            await RouteEditModal.ShowAsync(_windowSystem, route, _editor);
     }
 
     // Enable automatic HTTPS for the selected route's host by adding it to TLS
@@ -240,6 +257,7 @@ public sealed class RoutesView
         if (hasRow)
         {
             actions.Add(null); // separator
+            actions.Add(new(ViewToolbar.Caption("⚙", "Handlers", "m"), ManageHandlers));
             // Toggle TLS for the host: Enable when off, Disable when on.
             if (Selected is { TlsEnabled: true })
                 actions.Add(new(ViewToolbar.Caption("🔓", "Disable HTTPS", "h"), DisableHttps));
