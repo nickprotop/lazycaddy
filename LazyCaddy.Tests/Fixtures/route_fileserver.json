@@ -1,0 +1,1 @@
+{ "match": [ { "host": ["static.example.com"] } ], "handle": [ { "handler": "file_server", "root": "/var/www", "index_names": ["index.html"], "hide": [".git"] } ], "terminal": true }
