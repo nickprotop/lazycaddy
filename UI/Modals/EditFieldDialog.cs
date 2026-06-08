@@ -42,14 +42,14 @@ public sealed class EditFieldDialog : ModalBase<bool>
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
         if (e.KeyInfo.Key == ConsoleKey.Escape) { CloseWithResult(false); e.Handled = true; return; }
-        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; _ = ApplyAsync(); }
+        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; RunGuarded(ApplyAsync, m => _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]{m.Replace("[", "[[").Replace("]", "]]")}[/]" })); }
     }
 
     private async Task ApplyAsync()
     {
         var newJson = (_input?.Input ?? "").Trim();
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, $"Apply {_label}", _current, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync(_path, newJson, ct), $"{_label} → {newJson}");
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), $"{_label} → {newJson}");
         if (result.Success) CloseWithResult(true);
         else _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]{(result.Error ?? "").Replace("[", "[[").Replace("]", "]]")}[/]" });
     }

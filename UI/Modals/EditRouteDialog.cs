@@ -68,7 +68,7 @@ public sealed class EditRouteDialog : ModalBase<bool>
             .AddLine($"[{muted}]Enter: review & apply   Esc: cancel[/]")
             .WithMargin(2, 0, 2, 0).StickyBottom().Build());
 
-        _ = LoadCurrentAsync();
+        RunGuarded(LoadCurrentAsync, ShowError);
     }
 
     /// <summary>Read the live match + terminal nodes to pre-fill the form precisely
@@ -115,7 +115,7 @@ public sealed class EditRouteDialog : ModalBase<bool>
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
         if (e.KeyInfo.Key == ConsoleKey.Escape) { CloseWithResult(false); e.Handled = true; return; }
-        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; _ = ApplyAsync(); }
+        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; RunGuarded(ApplyAsync, ShowError); }
     }
 
     private async Task ApplyAsync()
@@ -154,7 +154,7 @@ public sealed class EditRouteDialog : ModalBase<bool>
 
         var host0 = hosts.Length > 0 ? hosts[0] : (paths.Length > 0 ? paths[0] : _route.HostOrMatch);
         var result = await _editor.ApplyAsync(
-            (admin, ct) => admin.PatchConfigAsync(path, newJson, ct),
+            (admin, ct) => admin.UpsertConfigAsync(path, newJson, ct),
             $"matcher {host0}: hosts=[{string.Join(", ", hosts)}] paths=[{string.Join(", ", paths)}]");
         if (!result.Success) { ShowError(result.Error ?? "Matcher write failed."); return false; }
         return true;
@@ -172,7 +172,7 @@ public sealed class EditRouteDialog : ModalBase<bool>
 
         var path = _resolvedUpstreamPath ?? $"{_route.ConfigPath}/handle/0/routes/0/handle/0/upstreams";
         var result = await _editor.ApplyAsync(
-            (admin, ct) => admin.PatchConfigAsync(path, newJson, ct),
+            (admin, ct) => admin.UpsertConfigAsync(path, newJson, ct),
             $"upstream {_route.HostOrMatch} → {string.Join(", ", dials)}");
         if (!result.Success) { ShowError(result.Error ?? "Upstream write failed."); return false; }
         return true;
@@ -189,7 +189,7 @@ public sealed class EditRouteDialog : ModalBase<bool>
 
         var host0 = _route.HostOrMatch;
         var result = await _editor.ApplyAsync(
-            (admin, ct) => admin.PatchConfigAsync(path, newJson, ct),
+            (admin, ct) => admin.UpsertConfigAsync(path, newJson, ct),
             $"terminal {host0} → {newJson}");
         if (!result.Success) { ShowError(result.Error ?? "Terminal write failed."); return false; }
         return true;
