@@ -4,11 +4,40 @@
 // -----------------------------------------------------------------------
 
 using SharpConsoleUI;
+using SharpConsoleUI.Builders;
+using SharpConsoleUI.Controls;
 
 namespace LazyCaddy.Configuration;
 
 internal static class UIConstants
 {
+    #region Action buttons
+
+    // Resting fill for a footer/toolbar action button (near-black, like cxfiles/LazyNuGet).
+    private static readonly Color ButtonBg = new(0x1e, 0x1e, 0x1e);
+    private static readonly Color ButtonFocusFg = new(0xff, 0xff, 0xff);
+
+    /// <summary>
+    /// A toolbar action button styled like cxfiles/LazyNuGet: caption in accent, shortcut hint in
+    /// muted grey, dark resting fill that brightens to the selection color on focus. Pass an empty
+    /// <paramref name="shortcut"/> to omit the hint.
+    /// </summary>
+    public static ButtonControl ActionButton(string caption, string shortcut, Action onClick)
+    {
+        var label = string.IsNullOrEmpty(shortcut)
+            ? $"[{Accent.ToMarkup()}]{caption}[/]"
+            : $"[{Accent.ToMarkup()}]{caption}[/] [{MutedText.ToMarkup()}]{shortcut}[/]";
+        return Controls.Button(label)
+            .OnClick((_, _) => onClick())
+            .WithBackgroundColor(ButtonBg)
+            .WithForegroundColor(PrimaryText)
+            .WithFocusedBackgroundColor(SelectedBg)
+            .WithFocusedForegroundColor(ButtonFocusFg)
+            .Build();
+    }
+
+    #endregion
+
     #region Timing
 
     public const int FadeInMs = 250;
