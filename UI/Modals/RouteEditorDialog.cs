@@ -46,13 +46,18 @@ public sealed class RouteEditorDialog : ModalBase<bool>
             .Rounded().WithBorderColor(UIConstants.MutedText).Interactive()
             .WithVerticalScrollbar(ScrollbarVisibility.Auto).WithName("handlersTable").Build();
         _handlers.RowActivatedAsync += async (_, _) => await EditSelectedAsync(raw: false);
+        // NOTE: RowActivatedAsync is awaited by the framework; the keyboard launches below
+        // are fire-and-forget, so they go through RunGuarded to surface errors (see OnKeyPressed).
         Modal.AddControl(_handlers);
 
         _hint = Controls.Markup().WithMargin(2, 0, 2, 0).StickyBottom().Build();
         Modal.AddControl(_hint);
 
-        RunGuarded(LoadAsync, m => _hint?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]{Escape(m)}[/]" }));
+        RunGuarded(LoadAsync, ShowHintError);
     }
+
+    private void ShowHintError(string m) =>
+        _hint?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]{Escape(m)}[/]" });
 
     private async Task LoadAsync()
     {
@@ -76,8 +81,8 @@ public sealed class RouteEditorDialog : ModalBase<bool>
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
         if (e.KeyInfo.Key == ConsoleKey.Escape) { CloseWithResult(false); e.Handled = true; return; }
-        if (e.KeyInfo.Key == ConsoleKey.J) { e.Handled = true; _ = EditSelectedAsync(raw: true); return; }
-        if (e.KeyInfo.Key == ConsoleKey.M) { e.Handled = true; _ = EditMatchAsync(); }
+        if (e.KeyInfo.Key == ConsoleKey.J) { e.Handled = true; RunGuarded(() => EditSelectedAsync(raw: true), ShowHintError); return; }
+        if (e.KeyInfo.Key == ConsoleKey.M) { e.Handled = true; RunGuarded(EditMatchAsync, ShowHintError); }
     }
 
     private async Task EditSelectedAsync(bool raw)
