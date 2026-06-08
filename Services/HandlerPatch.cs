@@ -4,6 +4,7 @@
 // -----------------------------------------------------------------------
 
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace LazyCaddy.Services;
 
@@ -239,6 +240,39 @@ public static class HandlerPatch
         var addrs = x.ResolverAddresses.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
         if (addrs.Length > 0) o["resolver"] = new Dictionary<string, object> { ["addresses"] = addrs };
         return JsonSerializer.Serialize(o, Opt);
+    }
+
+    /// <summary>Top-level keys the HttpTransport builder can emit; everything else is preserved on merge.</summary>
+    private static readonly HashSet<string> ManagedTransportKeys = new(StringComparer.Ordinal)
+    {
+        "protocol", "compression", "max_conns_per_host", "dial_timeout", "dial_fallback_delay",
+        "response_header_timeout", "expect_continue_timeout", "read_timeout", "write_timeout",
+        "max_response_header_size", "read_buffer_size", "write_buffer_size", "versions",
+        "local_address", "proxy_protocol", "resolver",
+    };
+
+    /// <summary>
+    /// Merge freshly-built managed transport JSON over the original transport node, preserving
+    /// any keys the builder does not manage (tls, keep_alive, network_proxy, etc). Caddy PATCH
+    /// replaces an object node wholesale, so we must carry unmanaged sub-nodes forward ourselves.
+    /// Managed keys reflect the user's current form state (cleared fields are intentionally omitted);
+    /// only keys absent from the managed key set are copied verbatim from the original.
+    /// </summary>
+    public static string MergeTransport(string originalJson, string managedJson)
+    {
+        if (string.IsNullOrWhiteSpace(originalJson)) return managedJson;
+        JsonNode? originalNode;
+        try { originalNode = JsonNode.Parse(originalJson); }
+        catch (JsonException) { return managedJson; }
+        if (originalNode is not JsonObject original) return managedJson;
+        if (JsonNode.Parse(managedJson) is not JsonObject managed) return managedJson;
+
+        foreach (var kvp in original)
+        {
+            if (ManagedTransportKeys.Contains(kvp.Key)) continue;
+            managed[kvp.Key] = kvp.Value?.DeepClone();
+        }
+        return JsonSerializer.Serialize(managed, Opt);
     }
 
     public static string TlsConfig(TlsConfigInput x)

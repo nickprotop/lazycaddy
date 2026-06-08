@@ -106,7 +106,10 @@ public sealed class HttpTransportForm : ModalBase<bool>
         var input = new HttpTransportInput(_compression?.Checked ?? false, N(_maxConns), T(_dialTo), T(_dialFb),
             T(_respTo), T(_expectTo), T(_readTo), T(_writeTo), N(_maxHdr), N(_readBuf), N(_writeBuf),
             Csv(_versions), T(_localAddr), T(_proxyProto), Csv(_resolver));
-        var newJson = HandlerPatch.HttpTransport(input);
+        var managedJson = HandlerPatch.HttpTransport(input);
+        // Caddy PATCH replaces the whole node — merge managed fields over the current transport so
+        // unmanaged sub-nodes (tls, keep_alive, network_proxy, …) survive a scalar edit here.
+        var newJson = HandlerPatch.MergeTransport(_original, managedJson);
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply HTTP transport", _original, newJson, Modal)) return;
         var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), "transport");
         if (result.Success) CloseWithResult(true); else Err(result.Error ?? "Write failed.");

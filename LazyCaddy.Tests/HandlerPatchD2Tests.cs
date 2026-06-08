@@ -104,4 +104,58 @@ public class HandlerPatchD2Tests
         Assert.Equal(100, r.GetProperty("max_idle_conns").GetInt32());
         Assert.Equal(10, r.GetProperty("max_idle_conns_per_host").GetInt32());
     }
+
+    [Fact]
+    public void MergeTransport_PreservesTlsAndKeepAlive()
+    {
+        var original = """{"protocol":"http","dial_timeout":"5s","tls":{"server_name":"x"},"keep_alive":{"enabled":false}}""";
+        var managed = """{"protocol":"http","dial_timeout":"9s"}""";
+        var r = Parse(HandlerPatch.MergeTransport(original, managed));
+        Assert.Equal("9s", r.GetProperty("dial_timeout").GetString());
+        Assert.Equal("x", r.GetProperty("tls").GetProperty("server_name").GetString());
+        Assert.False(r.GetProperty("keep_alive").GetProperty("enabled").GetBoolean());
+        // A managed key the user cleared (omitted from managed) must not be resurrected from original.
+        var original2 = """{"protocol":"http","read_timeout":"3s","tls":{"server_name":"x"}}""";
+        var r2 = Parse(HandlerPatch.MergeTransport(original2, managed));
+        Assert.False(r2.TryGetProperty("read_timeout", out _));
+        Assert.True(r2.TryGetProperty("tls", out _));
+    }
+
+    [Fact]
+    public void MergeTransport_PreservesUnknownKey()
+    {
+        var original = """{"protocol":"http","network_proxy":{"foo":1}}""";
+        var managed = """{"protocol":"http"}""";
+        var r = Parse(HandlerPatch.MergeTransport(original, managed));
+        Assert.Equal(1, r.GetProperty("network_proxy").GetProperty("foo").GetInt32());
+    }
+
+    [Fact]
+    public void MergeTransport_ManagedScalarsWin()
+    {
+        var original = """{"dial_timeout":"5s"}""";
+        var managed = """{"protocol":"http","dial_timeout":"9s"}""";
+        var r = Parse(HandlerPatch.MergeTransport(original, managed));
+        Assert.Equal("9s", r.GetProperty("dial_timeout").GetString());
+    }
+
+    [Fact]
+    public void MergeTransport_EmptyOriginal_ReturnsManaged()
+    {
+        var managed = """{"protocol":"http","dial_timeout":"9s"}""";
+        var r = Parse(HandlerPatch.MergeTransport("{}", managed));
+        Assert.Equal("http", r.GetProperty("protocol").GetString());
+        Assert.Equal("9s", r.GetProperty("dial_timeout").GetString());
+        Assert.Equal(2, r.EnumerateObject().Count());
+    }
+
+    [Fact]
+    public void MergeTransport_NonObjectOriginal_ReturnsManaged()
+    {
+        var managed = """{"protocol":"http"}""";
+        Assert.Equal(managed, HandlerPatch.MergeTransport("null", managed));
+        Assert.Equal(managed, HandlerPatch.MergeTransport("[]", managed));
+        Assert.Equal(managed, HandlerPatch.MergeTransport("", managed));
+        Assert.Equal(managed, HandlerPatch.MergeTransport(null!, managed));
+    }
 }
