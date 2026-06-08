@@ -22,10 +22,12 @@ public class HandlerPatchH2Tests
     public void Headers_BuildsRequestAndResponseOps()
     {
         var req = new HeaderOpsInput(
-            Set: new[] { ("X-A", "1") }, Add: System.Array.Empty<(string, string)>(), Delete: new[] { "X-Old" });
+            Set: new[] { ("X-A", "1") }, Add: System.Array.Empty<(string, string)>(), Delete: new[] { "X-Old" },
+            Replace: System.Array.Empty<(string, string, string, bool)>());
         var resp = new HeaderOpsInput(
-            Add: new[] { ("X-B", "2") }, Set: System.Array.Empty<(string, string)>(), Delete: System.Array.Empty<string>());
-        var json = HandlerPatch.Headers(req, resp);
+            Add: new[] { ("X-B", "2") }, Set: System.Array.Empty<(string, string)>(), Delete: System.Array.Empty<string>(),
+            Replace: System.Array.Empty<(string, string, string, bool)>());
+        var json = HandlerPatch.Headers(req, resp, null);
         using var d = JsonDocument.Parse(json);
         Assert.Equal("headers", d.RootElement.GetProperty("handler").GetString());
         Assert.Equal("1", d.RootElement.GetProperty("request").GetProperty("set").GetProperty("X-A")[0].GetString());
@@ -36,8 +38,8 @@ public class HandlerPatchH2Tests
     [Fact]
     public void Headers_OmitsEmptyOps()
     {
-        var empty = new HeaderOpsInput(System.Array.Empty<(string, string)>(), System.Array.Empty<(string, string)>(), System.Array.Empty<string>());
-        var json = HandlerPatch.Headers(empty, empty);
+        var empty = HeaderOpsInput.Empty;
+        var json = HandlerPatch.Headers(empty, empty, null);
         using var d = JsonDocument.Parse(json);
         Assert.False(d.RootElement.TryGetProperty("request", out _));
         Assert.False(d.RootElement.TryGetProperty("response", out _));

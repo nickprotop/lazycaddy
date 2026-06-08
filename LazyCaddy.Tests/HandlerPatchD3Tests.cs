@@ -73,6 +73,43 @@ public class HandlerPatchD3Tests
     }
 
     [Fact]
+    public void Headers_Replace_LiteralAndRegex_Emitted()
+    {
+        var req = new HeaderOpsInput(
+            System.Array.Empty<(string, string)>(), System.Array.Empty<(string, string)>(),
+            System.Array.Empty<string>(),
+            new[] { ("X-Url", "http://old", "http://new", false), ("Location", "secret", "***", true) });
+        var resp = HeaderOpsInput.Empty;
+        var json = HandlerPatch.Headers(req, resp, null);
+        var r = Parse(json);
+        var rep = r.GetProperty("request").GetProperty("replace");
+        Assert.Equal("http://old", rep.GetProperty("X-Url")[0].GetProperty("search").GetString());
+        Assert.Equal("http://new", rep.GetProperty("X-Url")[0].GetProperty("replace").GetString());
+        Assert.Equal("secret", rep.GetProperty("Location")[0].GetProperty("search_regexp").GetString());
+    }
+
+    [Fact]
+    public void Headers_ResponseRequire_Emitted()
+    {
+        var require = new ResponseRequireInput(new[] { 200, 204 },
+            new[] { ("Content-Type", "application/json") });
+        var json = HandlerPatch.Headers(HeaderOpsInput.Empty, HeaderOpsInput.Empty, require);
+        var r = Parse(json);
+        var req = r.GetProperty("response").GetProperty("require");
+        Assert.Equal(2, req.GetProperty("status_code").GetArrayLength());
+        Assert.Equal(200, req.GetProperty("status_code")[0].GetInt32());
+        Assert.Equal("application/json", req.GetProperty("headers").GetProperty("Content-Type")[0].GetString());
+    }
+
+    [Fact]
+    public void Headers_NoRequire_OmitsRequire()
+    {
+        var json = HandlerPatch.Headers(HeaderOpsInput.Empty, HeaderOpsInput.Empty, null);
+        var r = Parse(json);
+        Assert.False(r.TryGetProperty("response", out _));
+    }
+
+    [Fact]
     public void ManagedFileServerKeys_CoversEmittedKeys_ExcludesBrowseAndPolymorphic()
     {
         var keys = HandlerPatch.ManagedFileServerKeys;
