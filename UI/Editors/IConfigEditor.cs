@@ -12,9 +12,10 @@ public interface IConfigEditor
 {
     string TabTitle { get; }
     string ConfigPath { get; }
-    /// <summary>Add controls into the tab's container. onDirtyChanged lets the modal update its
-    /// dirty indicator / tab marker when a control value changes (best-effort).</summary>
-    void Build(ScrollablePanelControl container, Action onDirtyChanged);
+    /// <summary>Add controls into the tab's container (any linear-child host — the modal passes a
+    /// ScrollablePanel). onDirtyChanged lets the modal update its dirty indicator / tab marker when
+    /// a control value changes (best-effort).</summary>
+    void Build(IControlHost container, Action onDirtyChanged);
     /// <summary>GET the node and populate controls; capture the loaded snapshot for dirty + diff.</summary>
     Task LoadAsync(EditCoordinator editor);
     bool IsDirty { get; }

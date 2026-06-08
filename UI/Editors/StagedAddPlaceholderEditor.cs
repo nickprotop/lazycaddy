@@ -26,7 +26,7 @@ public sealed class StagedAddPlaceholderEditor : IConfigEditor
     public string TabTitle => $"+ {_type}";
     public string ConfigPath => $"(staged:{_type})"; // never used for a write — the modal POSTs MinimalHandler
 
-    public void Build(ScrollablePanelControl container, Action onDirtyChanged)
+    public void Build(IControlHost container, Action onDirtyChanged)
     {
         var muted = UIConstants.MutedText.ToMarkup();
         var accent = UIConstants.Accent.ToMarkup();

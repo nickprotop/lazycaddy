@@ -25,7 +25,7 @@ public sealed class TemplatesEditor : IConfigEditor
     public string TabTitle => "Templates";
     public string ConfigPath => _path;
 
-    public void Build(ScrollablePanelControl container, Action onDirtyChanged)
+    public void Build(IControlHost container, Action onDirtyChanged)
     {
         _onDirty = onDirtyChanged;
         var muted = UIConstants.MutedText.ToMarkup();

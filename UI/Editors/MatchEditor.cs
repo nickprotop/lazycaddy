@@ -31,7 +31,7 @@ public sealed class MatchEditor : IConfigEditor
     public string TabTitle => "Match";
     public string ConfigPath => Path;
 
-    public void Build(ScrollablePanelControl container, Action onDirtyChanged)
+    public void Build(IControlHost container, Action onDirtyChanged)
     {
         _onDirty = onDirtyChanged;
         var muted = UIConstants.MutedText.ToMarkup();

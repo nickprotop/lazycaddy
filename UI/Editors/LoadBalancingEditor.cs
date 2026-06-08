@@ -33,7 +33,7 @@ public sealed class LoadBalancingEditor : IConfigEditor
     public string TabTitle => "Load balancing";
     public string ConfigPath => $"{_path}/load_balancing";
 
-    public void Build(ScrollablePanelControl container, Action onDirtyChanged)
+    public void Build(IControlHost container, Action onDirtyChanged)
     {
         _onDirty = onDirtyChanged;
         var muted = UIConstants.MutedText.ToMarkup();

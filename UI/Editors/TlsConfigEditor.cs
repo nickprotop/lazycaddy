@@ -29,7 +29,7 @@ public sealed class TlsConfigEditor : IConfigEditor
     public string TabTitle => "TLS";
     public string ConfigPath => _path;
 
-    public void Build(ScrollablePanelControl container, Action onDirtyChanged)
+    public void Build(IControlHost container, Action onDirtyChanged)
     {
         _onDirty = onDirtyChanged;
         var muted = UIConstants.MutedText.ToMarkup();

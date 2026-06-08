@@ -32,7 +32,7 @@ public sealed class HealthChecksEditor : IConfigEditor
     public string TabTitle => "Health checks";
     public string ConfigPath => _reverseProxyPath;
 
-    public void Build(ScrollablePanelControl container, Action onDirtyChanged)
+    public void Build(IControlHost container, Action onDirtyChanged)
     {
         _onDirty = onDirtyChanged;
         var accent = UIConstants.Accent.ToMarkup();

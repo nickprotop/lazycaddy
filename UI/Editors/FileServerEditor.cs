@@ -37,7 +37,7 @@ public sealed class FileServerEditor : IConfigEditor
     public string TabTitle => "File server";
     public string ConfigPath => _path;
 
-    public void Build(ScrollablePanelControl container, Action onDirtyChanged)
+    public void Build(IControlHost container, Action onDirtyChanged)
     {
         _onDirty = onDirtyChanged;
         var muted = UIConstants.MutedText.ToMarkup();

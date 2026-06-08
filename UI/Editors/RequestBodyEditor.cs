@@ -25,7 +25,7 @@ public sealed class RequestBodyEditor : IConfigEditor
     public string TabTitle => "Request body";
     public string ConfigPath => _path;
 
-    public void Build(ScrollablePanelControl container, Action onDirtyChanged)
+    public void Build(IControlHost container, Action onDirtyChanged)
     {
         _onDirty = onDirtyChanged;
         var muted = UIConstants.MutedText.ToMarkup();
