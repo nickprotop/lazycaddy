@@ -35,7 +35,7 @@ public sealed class StaticResponseForm : ModalBase<bool>
         Modal.AddControl(_status); Modal.AddControl(_body); Modal.AddControl(_close);
         _error = Controls.Markup().WithMargin(2, 1, 2, 0).Build(); Modal.AddControl(_error);
         Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Enter: apply   Esc: cancel[/]").WithMargin(2, 0, 2, 0).StickyBottom().Build());
-        _ = LoadAsync();
+        RunGuarded(LoadAsync, m => _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]{m.Replace("[", "[[").Replace("]", "]]")}[/]" }));
     }
 
     private async Task LoadAsync()
@@ -59,7 +59,7 @@ public sealed class StaticResponseForm : ModalBase<bool>
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
         if (e.KeyInfo.Key == ConsoleKey.Escape) { CloseWithResult(false); e.Handled = true; return; }
-        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; _ = ApplyAsync(); }
+        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; RunGuarded(ApplyAsync, m => _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]{m.Replace("[", "[[").Replace("]", "]]")}[/]" })); }
     }
 
     private async Task ApplyAsync()
@@ -71,7 +71,7 @@ public sealed class StaticResponseForm : ModalBase<bool>
         }
         var newJson = HandlerPatch.StaticResponse(status, (_body?.Input ?? ""), _close?.Checked ?? false);
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply static_response", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync(_path, newJson, ct), $"static_response {_path}");
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), $"static_response {_path}");
         if (result.Success) CloseWithResult(true);
         else _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]{(result.Error ?? "").Replace("[", "[[").Replace("]", "]]")}[/]" });
     }

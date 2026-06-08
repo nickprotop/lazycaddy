@@ -35,7 +35,7 @@ public sealed class EncodeForm : ModalBase<bool>
         Modal.AddControl(_gzip); Modal.AddControl(_zstd); Modal.AddControl(_minLen);
         _error = Controls.Markup().WithMargin(2, 1, 2, 0).Build(); Modal.AddControl(_error);
         Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Enter: apply   Esc: cancel[/]").WithMargin(2, 0, 2, 0).StickyBottom().Build());
-        _ = LoadAsync();
+        RunGuarded(LoadAsync, Err);
     }
 
     private async Task LoadAsync()
@@ -58,7 +58,7 @@ public sealed class EncodeForm : ModalBase<bool>
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
         if (e.KeyInfo.Key == ConsoleKey.Escape) { CloseWithResult(false); e.Handled = true; return; }
-        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; _ = ApplyAsync(); }
+        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; RunGuarded(ApplyAsync, Err); }
     }
 
     private async Task ApplyAsync()
@@ -66,7 +66,7 @@ public sealed class EncodeForm : ModalBase<bool>
         int.TryParse((_minLen?.Input ?? "0").Trim(), out var min);
         var newJson = HandlerPatch.Encode(_gzip?.Checked ?? false, _zstd?.Checked ?? false, min);
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply encode", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync(_path, newJson, ct), $"encode {_path}");
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), $"encode {_path}");
         if (result.Success) CloseWithResult(true); else Err(result.Error ?? "Write failed.");
     }
 

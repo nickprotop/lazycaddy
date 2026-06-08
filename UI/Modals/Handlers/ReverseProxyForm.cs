@@ -37,7 +37,7 @@ public sealed class ReverseProxyForm : ModalBase<bool>
         Modal.AddControl(_upstreams); Modal.AddControl(_stream);
         _error = Controls.Markup().WithMargin(2, 1, 2, 0).Build(); Modal.AddControl(_error);
         Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Enter: apply upstreams   l: load balancing   c: health checks   t: transport   h: headers   Esc: cancel[/]").WithMargin(2, 0, 2, 0).StickyBottom().Build());
-        _ = LoadAsync();
+        RunGuarded(LoadAsync, Err);
     }
 
     private async Task LoadAsync()
@@ -69,7 +69,7 @@ public sealed class ReverseProxyForm : ModalBase<bool>
         if (e.KeyInfo.Key == ConsoleKey.C) { e.Handled = true; _ = HealthChecksForm.ShowAsync(WindowSystem, _path, _editor, Modal); return; }
         if (e.KeyInfo.Key == ConsoleKey.T) { e.Handled = true; _ = HttpTransportForm.ShowAsync(WindowSystem, _path, _editor, Modal); return; }
         if (e.KeyInfo.Key == ConsoleKey.H) { e.Handled = true; _ = HeadersForm.ShowAsync(WindowSystem, $"{_path}/headers", _editor, Modal); return; }
-        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; _ = ApplyAsync(); }
+        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; RunGuarded(ApplyAsync, Err); }
     }
 
     private async Task ApplyAsync()
@@ -82,13 +82,13 @@ public sealed class ReverseProxyForm : ModalBase<bool>
         // Diff shows upstreams (the main change); apply upstreams then flush as targeted PATCHes.
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply reverse_proxy upstreams", _origUpstreams, newUpstreams, Modal)) return;
 
-        var r1 = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync($"{_path}/upstreams", newUpstreams, ct),
+        var r1 = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync($"{_path}/upstreams", newUpstreams, ct),
             $"reverse_proxy {string.Join(", ", dials)}");
         if (!r1.Success) { Err(r1.Error ?? "Upstream write failed."); return; }
 
         if (newFlush != _origFlush)
         {
-            var r2 = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync($"{_path}/flush_interval", newFlush.ToString(), ct),
+            var r2 = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync($"{_path}/flush_interval", newFlush.ToString(), ct),
                 $"reverse_proxy flush_interval = {newFlush}");
             if (!r2.Success) { Err(r2.Error ?? "flush_interval write failed."); return; }
         }

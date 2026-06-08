@@ -44,7 +44,7 @@ public sealed class LoadBalancingForm : ModalBase<bool>
         Modal.AddControl(_retries); Modal.AddControl(_tryDur); Modal.AddControl(_tryInt);
         _error = Controls.Markup().WithMargin(2, 1, 2, 0).Build(); Modal.AddControl(_error);
         Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Enter: apply   Esc: cancel[/]").WithMargin(2, 0, 2, 0).StickyBottom().Build());
-        _ = LoadAsync();
+        RunGuarded(LoadAsync, Err);
     }
 
     private async Task LoadAsync()
