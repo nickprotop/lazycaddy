@@ -2,6 +2,9 @@
 // LazyCaddy - runtime configuration.
 // -----------------------------------------------------------------------
 
+using System.Security.Cryptography;
+using System.Text;
+
 namespace LazyCaddy.Configuration;
 
 /// <summary>
@@ -42,6 +45,57 @@ public sealed record LazyCaddyConfig
 
     /// <summary>When true, all writes are blocked (safety/demo).</summary>
     public bool ReadOnly { get; init; } = false;
+
+    /// <summary>
+    /// Snapshot directory scoped to <see cref="AdminApiUrl"/> so snapshots from different
+    /// Caddy instances never mix (a restore must not POST one instance's config into another).
+    /// </summary>
+    public string InstanceSnapshotDir => Path.Combine(SnapshotDir, InstanceSlug(AdminApiUrl));
+
+    /// <summary>
+    /// Deterministic, filesystem-safe directory name identifying a Caddy instance by its admin
+    /// endpoint. Identity is host:port (scheme-independent: http/https to the same host:port are
+    /// the same admin API). The slug is a sanitized, lowercased "{host}_{port}" plus a short hash
+    /// of the normalized key, so distinct endpoints never collide even when sanitization would
+    /// otherwise flatten them to the same string.
+    /// </summary>
+    public static string InstanceSlug(string adminApiUrl)
+    {
+        // Normalize to a canonical "host:port" identity key (scheme-independent).
+        string readable, key;
+        if (Uri.TryCreate(adminApiUrl?.Trim(), UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Host))
+        {
+            var host = uri.Host.ToLowerInvariant();
+            // uri.Port is filled with the scheme default (80/443) for http/https; -1 only for unknown schemes.
+            var port = uri.Port >= 0 ? uri.Port : 0;
+            key = $"{host}:{port}";
+            readable = Sanitize($"{host}_{port}");
+        }
+        else
+        {
+            // Unparseable input: fall back to the raw (trimmed, lowercased) string as the key.
+            key = (adminApiUrl ?? string.Empty).Trim().ToLowerInvariant();
+            readable = Sanitize(key);
+        }
+
+        return $"{readable}-{ShortHash(key)}";
+    }
+
+    private static string Sanitize(string s)
+    {
+        var sb = new StringBuilder(s.Length);
+        foreach (var c in s)
+            sb.Append((char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-') ? char.ToLowerInvariant(c) : '-');
+        var cleaned = sb.ToString().Trim('-');
+        return cleaned.Length == 0 ? "instance" : cleaned;
+    }
+
+    private static string ShortHash(string key)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(key));
+        // 8 hex chars = 32 bits: ample to disambiguate the handful of endpoints a user connects to.
+        return Convert.ToHexStringLower(bytes)[..8];
+    }
 
     public static LazyCaddyConfig Default { get; } = new();
 }

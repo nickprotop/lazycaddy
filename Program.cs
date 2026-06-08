@@ -32,7 +32,7 @@ internal static class Program
             var simulateDown = Environment.GetEnvironmentVariable("LAZYCADDY_SIMULATE_DOWN") == "1";
             var admin = new CaddyAdminClient(config, simulateDisconnected: simulateDown);
             var prober = new UpstreamProber(config);
-            var snapshots = new SnapshotStore(config.SnapshotDir, config.MaxAutoSnapshots);
+            var snapshots = new SnapshotStore(config.InstanceSnapshotDir, config.MaxAutoSnapshots);
             var editor = new EditCoordinator(admin, snapshots, config);
 
             // Use the new opt-in async model: with InstallSynchronizationContext on,
