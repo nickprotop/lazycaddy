@@ -36,4 +36,29 @@ public static class ServerConfigPatch
     /// <summary>A JSON string array from inputs, filtering empty/whitespace entries.</summary>
     public static string StringArray(IEnumerable<string> items) =>
         JsonSerializer.Serialize(items.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(), Opt);
+
+    /// <summary>A log `writer` object — file → output+filename; stdout/stderr/discard → output only.</summary>
+    public static string LogWriter(string output, string filename)
+    {
+        var o = new Dictionary<string, object> { ["output"] = output };
+        if (output == "file" && !string.IsNullOrWhiteSpace(filename)) o["filename"] = filename;
+        return JsonSerializer.Serialize(o, Opt);
+    }
+
+    /// <summary>A logging.logs entry: level/include/exclude/writer, omitting empties. writerJson "" → no writer.</summary>
+    public static string LogNode(string level, IReadOnlyList<string> include, IReadOnlyList<string> exclude, string writerJson)
+    {
+        var o = new Dictionary<string, object>();
+        if (!string.IsNullOrWhiteSpace(level)) o["level"] = level;
+        var inc = include.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        if (inc.Length > 0) o["include"] = inc;
+        var exc = exclude.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        if (exc.Length > 0) o["exclude"] = exc;
+        if (!string.IsNullOrWhiteSpace(writerJson))
+        {
+            using var w = JsonDocument.Parse(writerJson);
+            o["writer"] = w.RootElement.Clone();
+        }
+        return JsonSerializer.Serialize(o, Opt);
+    }
 }

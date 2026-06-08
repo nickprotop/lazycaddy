@@ -58,4 +58,41 @@ public class ServerConfigPatchTests
         Assert.Equal(":8443", r[0].GetString());
         Assert.Equal(":443", r[1].GetString());
     }
+
+    [Fact]
+    public void LogWriter_File_EmitsOutputAndFilename()
+    {
+        var r = Parse(ServerConfigPatch.LogWriter("file", "/var/log/x.log"));
+        Assert.Equal("file", r.GetProperty("output").GetString());
+        Assert.Equal("/var/log/x.log", r.GetProperty("filename").GetString());
+    }
+
+    [Fact]
+    public void LogWriter_Stdout_EmitsOnlyOutput()
+    {
+        var r = Parse(ServerConfigPatch.LogWriter("stdout", ""));
+        Assert.Equal("stdout", r.GetProperty("output").GetString());
+        Assert.False(r.TryGetProperty("filename", out _));
+    }
+
+    [Fact]
+    public void LogNode_OmitsEmpty_KeepsSet()
+    {
+        var r = Parse(ServerConfigPatch.LogNode("DEBUG",
+            include: new[] { "http.log.access" }, exclude: System.Array.Empty<string>(),
+            writerJson: ServerConfigPatch.LogWriter("stdout", "")));
+        Assert.Equal("DEBUG", r.GetProperty("level").GetString());
+        Assert.Equal("http.log.access", r.GetProperty("include")[0].GetString());
+        Assert.False(r.TryGetProperty("exclude", out _));
+        Assert.Equal("stdout", r.GetProperty("writer").GetProperty("output").GetString());
+    }
+
+    [Fact]
+    public void LogNode_NoWriter_OmitsWriter()
+    {
+        var r = Parse(ServerConfigPatch.LogNode("", System.Array.Empty<string>(), System.Array.Empty<string>(), ""));
+        Assert.Equal(JsonValueKind.Object, r.ValueKind);
+        Assert.False(r.TryGetProperty("writer", out _));
+        Assert.False(r.TryGetProperty("level", out _));
+    }
 }
