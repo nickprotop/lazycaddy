@@ -21,6 +21,7 @@ public sealed class RouteEditorDialog : ModalBase<bool>
     private readonly EditCoordinator _editor;
     private TableControl? _handlers;
     private MarkupControl? _hint;
+    private int _handlerCount;
 
     private RouteEditorDialog(Route route, EditCoordinator editor) { _route = route; _editor = editor; }
 
@@ -37,7 +38,7 @@ public sealed class RouteEditorDialog : ModalBase<bool>
         var accent = UIConstants.Accent.ToMarkup();
         Modal.AddControl(Controls.Markup()
             .AddLine($"[bold {accent}]{Escape(_route.HostOrMatch)}[/]")
-            .AddLine($"[{muted}]Handlers run top-to-bottom. Enter: edit · j: raw JSON · m: edit match.[/]")
+            .AddLine($"[{muted}]Handlers run top-to-bottom. Enter: edit · a: add · d: delete · j: raw · m: match.[/]")
             .WithMargin(2, 1, 2, 0).Build());
 
         _handlers = Controls.Table()
@@ -66,6 +67,7 @@ public sealed class RouteEditorDialog : ModalBase<bool>
             var routeJson = await _editor.GetConfigNodeAsync(_route.ConfigPath);
             var descriptors = RouteModel.ParseHandlers(routeJson, _route.ConfigPath);
             if (_handlers is null) return;
+            _handlerCount = descriptors.Count;
             _handlers.ClearRows();
             foreach (var d in descriptors)
             {
@@ -82,7 +84,9 @@ public sealed class RouteEditorDialog : ModalBase<bool>
     {
         if (e.KeyInfo.Key == ConsoleKey.Escape) { CloseWithResult(false); e.Handled = true; return; }
         if (e.KeyInfo.Key == ConsoleKey.J) { e.Handled = true; RunGuarded(() => EditSelectedAsync(raw: true), ShowHintError); return; }
-        if (e.KeyInfo.Key == ConsoleKey.M) { e.Handled = true; RunGuarded(EditMatchAsync, ShowHintError); }
+        if (e.KeyInfo.Key == ConsoleKey.M) { e.Handled = true; RunGuarded(EditMatchAsync, ShowHintError); return; }
+        if (e.KeyInfo.Key == ConsoleKey.A) { e.Handled = true; RunGuarded(AddHandlerAsync, ShowHintError); return; }
+        if (e.KeyInfo.Key == ConsoleKey.D) { e.Handled = true; RunGuarded(DeleteHandlerAsync, ShowHintError); }
     }
 
     private async Task EditSelectedAsync(bool raw)
@@ -94,6 +98,47 @@ public sealed class RouteEditorDialog : ModalBase<bool>
         else
             changed = await OpenFormFor(d);
         if (changed) await LoadAsync(); // refresh summaries after an edit
+    }
+
+    private async Task AddHandlerAsync()
+    {
+        var type = await HandlerTypePicker.ShowAsync(WindowSystem, Modal);
+        if (type is null) return;
+        var handler = NewRouteSkeleton.MinimalHandler(type);
+        var r = await _editor.ApplyAsync(
+            (a, ct) => a.PostConfigAsync($"{_route.ConfigPath}/handle", handler, ct),
+            $"add {type} to {_route.HostOrMatch}");
+        if (!r.Success) { ShowHintError(r.Error ?? "Add failed."); return; }
+
+        // New handler appended → open its form at handle/{last}.
+        int newIndex;
+        try
+        {
+            var handleJson = await _editor.GetConfigNodeAsync($"{_route.ConfigPath}/handle");
+            using var hd = JsonDocument.Parse(handleJson);
+            newIndex = hd.RootElement.ValueKind == JsonValueKind.Array ? hd.RootElement.GetArrayLength() - 1 : 0;
+        }
+        catch { newIndex = 0; }
+        await HandlerFormDispatch.OpenAsync(WindowSystem, NewRouteSkeleton.FormType(type),
+            $"{_route.ConfigPath}/handle/{newIndex}", _editor, Modal);
+        await LoadAsync();
+    }
+
+    private async Task DeleteHandlerAsync()
+    {
+        if (_handlers?.SelectedRow?.Tag is not HandlerDescriptor d) return;
+        // Only top-level handlers of THIS route: path must be "{route}/handle/N".
+        var prefix = $"{_route.ConfigPath}/handle/";
+        if (!d.ConfigPath.StartsWith(prefix, StringComparison.Ordinal))
+        { ShowHintError("Select a top-level handler to delete (edit nested ones via the subroute)."); return; }
+        if (!await ConfirmDeleteDialog.ShowAsync(WindowSystem, $"handler {d.Type}", Modal)) return;
+        var r = await _editor.ApplyAsync(
+            (a, ct) => a.DeleteConfigAsync(d.ConfigPath, ct),
+            $"delete {d.Type} from {_route.HostOrMatch}");
+        if (!r.Success) { ShowHintError(r.Error ?? "Delete failed."); return; }
+        await LoadAsync();
+        if (_handlerCount == 0)
+            _hint?.SetContent(new List<string> { $"[{UIConstants.MutedText.ToMarkup()}]Route now has no handlers — delete the route from the Routes view if unwanted.[/]" });
     }
 
     private Task<bool> OpenFormFor(HandlerDescriptor d) =>
