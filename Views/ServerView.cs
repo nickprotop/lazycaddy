@@ -438,6 +438,11 @@ public sealed class ServerView
                 var r = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(path, json, ct), c.Label);
                 if (!r.Success)
                 {
+                    // Commit the sentinels of the fields that DID write, so they don't stay
+                    // forever-dirty; the unwritten ones remain dirty for retry/revert. Recompute
+                    // _dirty against the now-partially-committed state.
+                    CommitLoadedFor(changes.Take(applied));
+                    _dirty = HasUnsavedChanges();
                     SetStatus($"[{UIConstants.Bad.ToMarkup()}]{Escape(r.Error ?? "write failed")}[/]");
                     return; // prior writes stay applied
                 }
@@ -446,7 +451,9 @@ public sealed class ServerView
 
             // Success: commit loaded sentinels to current, drop dirty, pull fresh state.
             CommitLoaded();
+            _adminWasNull = false; // a written admin object now exists; subsequent edits patch admin/listen
             _dirty = false;
+            _dirtyNoticeShown = false;
             var msg = $"Applied {applied} change(s).";
             if (skipped.Count > 0) msg += " Skipped: " + string.Join(", ", skipped) + ".";
             SetStatus($"[{UIConstants.Accent.ToMarkup()}]{Escape(msg)}[/]");
@@ -485,7 +492,7 @@ public sealed class ServerView
         changes.Add((
             path,
             port.ToString(),
-            loaded.Length == 0 ? "(unset)" : loaded,
+            loaded.Length == 0 ? "null" : loaded,   // valid JSON for the combined-diff display
             port.ToString(),
             $"{key} → {port}"));
     }
@@ -514,6 +521,7 @@ public sealed class ServerView
     private void Revert()
     {
         _dirty = false;
+        _dirtyNoticeShown = false;
         if (_lastSnapshotJson.Length == 0) { SetStatus($"[{UIConstants.MutedText.ToMarkup()}]Nothing to revert.[/]"); return; }
         try
         {
@@ -530,6 +538,7 @@ public sealed class ServerView
     private void Reload()
     {
         _dirty = false;
+        _dirtyNoticeShown = false;
         _onRefresh();
         SetStatus($"[{UIConstants.MutedText.ToMarkup()}]Reloading…[/]");
     }
@@ -545,6 +554,26 @@ public sealed class ServerView
         _loadedHttpsPort = Cur(_httpsPort); _loadedGrace = Cur(_grace);
         _loadedH1 = Chk(_h1); _loadedH2 = Chk(_h2); _loadedH3 = Chk(_h3);
         _loadedDisable = Chk(_disable); _loadedDisableRedir = Chk(_disableRedir); _loadedDisableCerts = Chk(_disableCerts);
+    }
+
+    // Commit only the loaded sentinels of the given (already-applied) changes, identified by path.
+    // Used after a partial-apply failure so the successfully-written fields stop registering dirty.
+    private void CommitLoadedFor(IEnumerable<(string Path, string Json, string Old, string New, string Label)> applied)
+    {
+        foreach (var c in applied)
+        {
+            if (c.Path.EndsWith("/listen", StringComparison.Ordinal) && c.Path.StartsWith("apps/http/servers", StringComparison.Ordinal)) _loadedListen = Cur(_listen);
+            else if (c.Path.EndsWith("/protocols", StringComparison.Ordinal)) { _loadedH1 = Chk(_h1); _loadedH2 = Chk(_h2); _loadedH3 = Chk(_h3); }
+            else if (c.Path.EndsWith("/automatic_https", StringComparison.Ordinal)) { _loadedDisable = Chk(_disable); _loadedDisableRedir = Chk(_disableRedir); _loadedDisableCerts = Chk(_disableCerts); _loadedSkip = Cur(_skip); }
+            else if (c.Path.EndsWith("/read_timeout", StringComparison.Ordinal)) _loadedReadTo = Cur(_readTo);
+            else if (c.Path.EndsWith("/read_header_timeout", StringComparison.Ordinal)) _loadedReadHdrTo = Cur(_readHdrTo);
+            else if (c.Path.EndsWith("/write_timeout", StringComparison.Ordinal)) _loadedWriteTo = Cur(_writeTo);
+            else if (c.Path.EndsWith("/idle_timeout", StringComparison.Ordinal)) _loadedIdleTo = Cur(_idleTo);
+            else if (c.Path == "admin" || c.Path == "admin/listen") { _loadedAdminListen = Cur(_adminListen); if (c.Path == "admin") _adminWasNull = false; }
+            else if (c.Path == "apps/http/http_port") _loadedHttpPort = Cur(_httpPort);
+            else if (c.Path == "apps/http/https_port") _loadedHttpsPort = Cur(_httpsPort);
+            else if (c.Path == "apps/http/grace_period") _loadedGrace = Cur(_grace);
+        }
     }
 
     private static string Cur(PromptControl? c) => (c?.Input ?? "").Trim();
