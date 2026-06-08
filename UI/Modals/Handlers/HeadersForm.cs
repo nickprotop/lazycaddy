@@ -103,7 +103,7 @@ public sealed class HeadersForm : ModalBase<bool>
     {
         var newJson = HandlerPatch.Headers(ParseOps(_req?.GetContent() ?? ""), ParseOps(_resp?.GetContent() ?? ""));
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply headers", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync(_path, newJson, ct), $"headers {_path}");
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), $"headers {_path}");
         if (result.Success) CloseWithResult(true); else Err(result.Error ?? "Write failed.");
     }
 
