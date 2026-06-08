@@ -36,7 +36,7 @@ public sealed class ReverseProxyForm : ModalBase<bool>
         _stream = new CheckboxControl { Label = "Stream immediately (flush_interval = -1)", Checked = false };
         Modal.AddControl(_upstreams); Modal.AddControl(_stream);
         _error = Controls.Markup().WithMargin(2, 1, 2, 0).Build(); Modal.AddControl(_error);
-        Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Enter: apply   Esc: cancel[/]").WithMargin(2, 0, 2, 0).StickyBottom().Build());
+        Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Enter: apply upstreams   l: load balancing   c: health checks   Esc: cancel[/]").WithMargin(2, 0, 2, 0).StickyBottom().Build());
         _ = LoadAsync();
     }
 
@@ -65,6 +65,8 @@ public sealed class ReverseProxyForm : ModalBase<bool>
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
         if (e.KeyInfo.Key == ConsoleKey.Escape) { CloseWithResult(false); e.Handled = true; return; }
+        if (e.KeyInfo.Key == ConsoleKey.L) { e.Handled = true; _ = LoadBalancingForm.ShowAsync(WindowSystem, _path, _editor, Modal); return; }
+        if (e.KeyInfo.Key == ConsoleKey.C) { e.Handled = true; _ = HealthChecksForm.ShowAsync(WindowSystem, _path, _editor, Modal); return; }
         if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; _ = ApplyAsync(); }
     }
 
