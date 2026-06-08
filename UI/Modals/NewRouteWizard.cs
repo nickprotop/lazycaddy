@@ -96,9 +96,13 @@ public sealed class NewRouteWizard : ModalBase<bool>
         }
         catch { newIndex = 0; }
 
-        CloseWithResult(true); // the route exists; opening the form is a follow-on refinement
+        // Open the matching handler form WHILE this wizard is still open, parented to its live
+        // Modal (the established pattern — see RouteEditorDialog.EditSelectedAsync). Closing the
+        // wizard first would orphan the form on a closed window. The route already exists, so if
+        // the user cancels the form the minimal-but-valid route remains.
         var handlerPath = $"{_serverPath}/routes/{newIndex}/handle/0";
-        _ = HandlerFormDispatch.OpenAsync(WindowSystem, NewRouteSkeleton.FormType(chosen), handlerPath, _editor, ParentWindow ?? Modal);
+        await HandlerFormDispatch.OpenAsync(WindowSystem, NewRouteSkeleton.FormType(chosen), handlerPath, _editor, Modal);
+        CloseWithResult(true);
     }
 
     private void Err(string m) =>
