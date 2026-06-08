@@ -95,7 +95,12 @@ public sealed class RouteEditorDialog : ModalBase<bool>
         "file_server"     => FileServerForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
         "static_response" => StaticResponseForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
         "error"           => ErrorForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
-        // No dedicated form yet (reverse_proxy/subroute/middleware) → raw node editor.
+        "rewrite"         => RewriteForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
+        "headers"         => HeadersForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
+        "encode"          => EncodeForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
+        "vars"            => VarsForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
+        "request_body"    => RequestBodyForm.ShowAsync(WindowSystem, d.ConfigPath, _editor, Modal),
+        // No dedicated form yet (reverse_proxy/subroute/templates/auth) → raw node editor.
         _                 => RawNodeEditDialog.ShowAsync(WindowSystem, $"Edit {d.Type}", d.ConfigPath, _editor, Modal),
     };
 
