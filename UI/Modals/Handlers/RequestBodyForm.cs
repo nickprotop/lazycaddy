@@ -59,7 +59,7 @@ public sealed class RequestBodyForm : ModalBase<bool>
         { Err("Enter a non-negative byte count."); return; }
         var newJson = HandlerPatch.RequestBody(max);
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply request_body", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync(_path, newJson, ct), $"request_body {_path}");
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), $"request_body {_path}");
         if (result.Success) CloseWithResult(true); else Err(result.Error ?? "Write failed.");
     }
 

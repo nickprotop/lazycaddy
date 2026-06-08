@@ -68,7 +68,7 @@ public sealed class ErrorForm : ModalBase<bool>
         }
         var newJson = HandlerPatch.Error((_msg?.Input ?? ""), status);
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply error", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync(_path, newJson, ct), $"error {_path}");
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), $"error {_path}");
         if (result.Success) CloseWithResult(true);
         else _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]{(result.Error ?? "").Replace("[", "[[").Replace("]", "]]")}[/]" });
     }

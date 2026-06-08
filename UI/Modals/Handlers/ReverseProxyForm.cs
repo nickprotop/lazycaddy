@@ -82,13 +82,13 @@ public sealed class ReverseProxyForm : ModalBase<bool>
         // Diff shows upstreams (the main change); apply upstreams then flush as targeted PATCHes.
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply reverse_proxy upstreams", _origUpstreams, newUpstreams, Modal)) return;
 
-        var r1 = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync($"{_path}/upstreams", newUpstreams, ct),
+        var r1 = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync($"{_path}/upstreams", newUpstreams, ct),
             $"reverse_proxy {string.Join(", ", dials)}");
         if (!r1.Success) { Err(r1.Error ?? "Upstream write failed."); return; }
 
         if (newFlush != _origFlush)
         {
-            var r2 = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync($"{_path}/flush_interval", newFlush.ToString(), ct),
+            var r2 = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync($"{_path}/flush_interval", newFlush.ToString(), ct),
                 $"reverse_proxy flush_interval = {newFlush}");
             if (!r2.Success) { Err(r2.Error ?? "flush_interval write failed."); return; }
         }

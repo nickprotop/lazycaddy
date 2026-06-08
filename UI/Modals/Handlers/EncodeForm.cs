@@ -66,7 +66,7 @@ public sealed class EncodeForm : ModalBase<bool>
         int.TryParse((_minLen?.Input ?? "0").Trim(), out var min);
         var newJson = HandlerPatch.Encode(_gzip?.Checked ?? false, _zstd?.Checked ?? false, min);
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply encode", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync(_path, newJson, ct), $"encode {_path}");
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), $"encode {_path}");
         if (result.Success) CloseWithResult(true); else Err(result.Error ?? "Write failed.");
     }
 

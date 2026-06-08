@@ -61,7 +61,7 @@ public sealed class TemplatesForm : ModalBase<bool>
         var mime = (_mime?.Input ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         var newJson = HandlerPatch.Templates((_fileRoot?.Input ?? "").Trim(), mime);
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply templates", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync(_path, newJson, ct), $"templates {_path}");
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), $"templates {_path}");
         if (result.Success) CloseWithResult(true); else Err(result.Error ?? "Write failed.");
     }
 

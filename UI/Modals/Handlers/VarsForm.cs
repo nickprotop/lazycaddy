@@ -67,7 +67,7 @@ public sealed class VarsForm : ModalBase<bool>
             .ToArray();
         var newJson = HandlerPatch.Vars(entries);
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply vars", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync(_path, newJson, ct), $"vars {_path}");
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), $"vars {_path}");
         if (result.Success) CloseWithResult(true); else Err(result.Error ?? "Write failed.");
     }
 

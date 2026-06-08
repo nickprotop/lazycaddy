@@ -71,7 +71,7 @@ public sealed class StaticResponseForm : ModalBase<bool>
         }
         var newJson = HandlerPatch.StaticResponse(status, (_body?.Input ?? ""), _close?.Checked ?? false);
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply static_response", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync(_path, newJson, ct), $"static_response {_path}");
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), $"static_response {_path}");
         if (result.Success) CloseWithResult(true);
         else _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]{(result.Error ?? "").Replace("[", "[[").Replace("]", "]]")}[/]" });
     }

@@ -67,7 +67,7 @@ public sealed class RewriteForm : ModalBase<bool>
         var newJson = HandlerPatch.Rewrite((_method?.Input ?? "").Trim(), (_uri?.Input ?? "").Trim(),
             (_stripPre?.Input ?? "").Trim(), (_stripSuf?.Input ?? "").Trim());
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply rewrite", _original, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync(_path, newJson, ct), $"rewrite {_path}");
+        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, newJson, ct), $"rewrite {_path}");
         if (result.Success) CloseWithResult(true); else Err(result.Error ?? "Write failed.");
     }
 
