@@ -46,20 +46,6 @@ public static class HandlerPatch
 {
     private static readonly JsonSerializerOptions Opt = new() { WriteIndented = true };
 
-    public static string FileServer(string root, IEnumerable<string> indexNames,
-        IEnumerable<string> hide, bool browse, bool passThru)
-    {
-        var o = new Dictionary<string, object> { ["handler"] = "file_server" };
-        if (!string.IsNullOrWhiteSpace(root)) o["root"] = root;
-        var idx = indexNames.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
-        if (idx.Length > 0) o["index_names"] = idx;
-        var hd = hide.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
-        if (hd.Length > 0) o["hide"] = hd;
-        if (browse) o["browse"] = new Dictionary<string, object>();
-        if (passThru) o["pass_thru"] = true;
-        return JsonSerializer.Serialize(o, Opt);
-    }
-
     public static readonly IReadOnlySet<string> ManagedFileServerKeys = new HashSet<string>
     {
         "handler", "root", "index_names", "hide", "pass_thru",
