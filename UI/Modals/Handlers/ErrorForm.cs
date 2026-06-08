@@ -46,7 +46,11 @@ public sealed class ErrorForm : ModalBase<bool>
             if (r.TryGetProperty("error", out var m) && m.ValueKind == JsonValueKind.String) _msg?.SetInput(m.GetString());
             if (r.TryGetProperty("status_code", out var s)) _status?.SetInput(s.ToString());
         }
-        catch { }
+        catch (JsonException ex)
+        {
+            _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]Could not parse error node: {ex.Message.Replace("[", "[[").Replace("]", "]]")}[/]" });
+        }
+        catch { /* node absent (404)/network → leave defaults */ }
     }
 
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
@@ -57,7 +61,11 @@ public sealed class ErrorForm : ModalBase<bool>
 
     private async Task ApplyAsync()
     {
-        int.TryParse((_status?.Input ?? "").Trim(), out var status);
+        if (!int.TryParse((_status?.Input ?? "").Trim(), out var status) || status <= 0)
+        {
+            _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]Enter a valid HTTP status code (e.g. 500).[/]" });
+            return;
+        }
         var newJson = HandlerPatch.Error((_msg?.Input ?? ""), status);
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply error", _original, newJson, Modal)) return;
         var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync(_path, newJson, ct), $"error {_path}");

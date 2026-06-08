@@ -58,7 +58,13 @@ public sealed class FileServerForm : ModalBase<bool>
             if (_browse is not null) _browse.Checked = r.TryGetProperty("browse", out _);
             if (_passThru is not null) _passThru.Checked = r.TryGetProperty("pass_thru", out var pt) && pt.ValueKind == JsonValueKind.True;
         }
-        catch { /* leave defaults */ }
+        catch (JsonException ex)
+        {
+            // Corrupt node JSON: surface it rather than silently opening blank (which would
+            // discard the real config on apply). 404/network → fall through, leave defaults.
+            _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]Could not parse file_server node: {ex.Message.Replace("[", "[[").Replace("]", "]]")}[/]" });
+        }
+        catch { /* node absent (404)/network → leave defaults */ }
     }
 
     private static string JoinArr(JsonElement obj, string key) =>

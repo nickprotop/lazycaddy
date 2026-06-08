@@ -49,7 +49,11 @@ public sealed class StaticResponseForm : ModalBase<bool>
             if (r.TryGetProperty("body", out var b) && b.ValueKind == JsonValueKind.String) _body?.SetInput(b.GetString());
             if (_close is not null) _close.Checked = r.TryGetProperty("close", out var c) && c.ValueKind == JsonValueKind.True;
         }
-        catch { }
+        catch (JsonException ex)
+        {
+            _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]Could not parse static_response node: {ex.Message.Replace("[", "[[").Replace("]", "]]")}[/]" });
+        }
+        catch { /* node absent (404)/network → leave defaults */ }
     }
 
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
@@ -60,7 +64,11 @@ public sealed class StaticResponseForm : ModalBase<bool>
 
     private async Task ApplyAsync()
     {
-        int.TryParse((_status?.Input ?? "").Trim(), out var status);
+        if (!int.TryParse((_status?.Input ?? "").Trim(), out var status) || status <= 0)
+        {
+            _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]Enter a valid HTTP status code (e.g. 200).[/]" });
+            return;
+        }
         var newJson = HandlerPatch.StaticResponse(status, (_body?.Input ?? ""), _close?.Checked ?? false);
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply static_response", _original, newJson, Modal)) return;
         var result = await _editor.ApplyAsync((a, ct) => a.PatchConfigAsync(_path, newJson, ct), $"static_response {_path}");
