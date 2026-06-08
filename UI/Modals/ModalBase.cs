@@ -105,4 +105,32 @@ public abstract class ModalBase<TResult>
         Result = result;
         Modal.Close();
     }
+
+    /// <summary>
+    /// Launch async work from a synchronous UI event (e.g. the <see cref="Modal.KeyPressed"/>
+    /// contract handler, which must stay sync to return <c>e.Handled</c>). The work runs as a
+    /// fire-and-forget task that must NEVER block the UI thread — every long operation inside it
+    /// has to be <c>await</c>ed (HTTP, nested modals, Task.Delay), never <c>.Result</c>/<c>.Wait()</c>,
+    /// or the captured UI SynchronizationContext deadlocks the loop (see ConsoleEx
+    /// THREADING_AND_ASYNC.md). Unlike a bare <c>_ = WorkAsync()</c>, exceptions are not swallowed
+    /// to the framework log — they are marshalled onto the UI thread and handed to
+    /// <paramref name="onError"/> so the user sees the failure instead of a frozen dialog.
+    /// </summary>
+    protected void RunGuarded(Func<Task> work, Action<string>? onError = null)
+    {
+        _ = RunGuardedCore(work, onError);
+    }
+
+    private async Task RunGuardedCore(Func<Task> work, Action<string>? onError)
+    {
+        try
+        {
+            await work();
+        }
+        catch (Exception ex)
+        {
+            // Resume on the UI thread before touching any control.
+            await WindowSystem.InvokeAsync(() => onError?.Invoke(ex.Message), label: "ModalBase.RunGuarded");
+        }
+    }
 }

@@ -32,8 +32,19 @@ public interface ICaddyAdmin
     /// <summary>GET a single config node as raw JSON, e.g. "apps/http/servers/srv0/routes/0/match".</summary>
     Task<string> GetConfigNodeAsync(string path, CancellationToken ct = default);
 
-    /// <summary>PATCH (replace) a single config node with the given JSON.</summary>
+    /// <summary>PATCH (replace) an existing config node with the given JSON.</summary>
     Task<WriteResult> PatchConfigAsync(string path, string json, CancellationToken ct = default);
+
+    /// <summary>PUT (create) a config node. NOTE: Caddy returns 409 if the node already exists.</summary>
+    Task<WriteResult> PutConfigAsync(string path, string json, CancellationToken ct = default);
+
+    /// <summary>
+    /// Create-or-replace a config node regardless of whether it currently exists.
+    /// Caddy has no single verb for this: PATCH replaces an existing node but 404s when
+    /// absent; PUT creates an absent node but 409s when present. This tries PATCH first
+    /// and falls back to PUT on a 404 (absent node).
+    /// </summary>
+    Task<WriteResult> UpsertConfigAsync(string path, string json, CancellationToken ct = default);
 
     /// <summary>POST (append to an array) at a config path.</summary>
     Task<WriteResult> PostConfigAsync(string path, string json, CancellationToken ct = default);

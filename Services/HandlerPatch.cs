@@ -13,6 +13,12 @@ public sealed record HeaderOpsInput(
     IReadOnlyList<(string Name, string Value)> Set,
     IReadOnlyList<string> Delete);
 
+public sealed record ActiveHealthCheckInput(string Uri, int Port, string Method, string Interval,
+    string Timeout, int Passes, int Fails, int ExpectStatus, string ExpectBody);
+
+public sealed record PassiveHealthCheckInput(string FailDuration, int MaxFails,
+    int UnhealthyRequestCount, IReadOnlyList<int> UnhealthyStatus, string UnhealthyLatency);
+
 public static class HandlerPatch
 {
     private static readonly JsonSerializerOptions Opt = new() { WriteIndented = true };
@@ -130,5 +136,69 @@ public static class HandlerPatch
         if (ups.Length > 0) o["upstreams"] = ups;
         if (flushInterval != 0) o["flush_interval"] = flushInterval;
         return JsonSerializer.Serialize(o, Opt);
+    }
+
+    public static string LoadBalancing(string policy, string policyParam, int retries,
+        string tryDuration, string tryInterval)
+    {
+        var o = new Dictionary<string, object>();
+        if (!string.IsNullOrWhiteSpace(policy))
+        {
+            var sp = new Dictionary<string, object> { ["policy"] = policy };
+            // Single-param policies: map the param to the right key.
+            switch (policy)
+            {
+                case "header": if (!string.IsNullOrWhiteSpace(policyParam)) sp["field"] = policyParam; break;
+                case "cookie": if (!string.IsNullOrWhiteSpace(policyParam)) sp["name"] = policyParam; break;
+                case "query":  if (!string.IsNullOrWhiteSpace(policyParam)) sp["key"] = policyParam; break;
+                case "random_choose":
+                    if (int.TryParse(policyParam, out var n) && n > 0) sp["choose"] = n; break;
+                case "weighted_round_robin":
+                    var weights = policyParam.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                        .Select(s => int.TryParse(s, out var w) ? w : 0).Where(w => w > 0).ToArray();
+                    if (weights.Length > 0) sp["weights"] = weights; break;
+            }
+            o["selection_policy"] = sp;
+        }
+        if (retries > 0) o["retries"] = retries;
+        if (!string.IsNullOrWhiteSpace(tryDuration)) o["try_duration"] = tryDuration;
+        if (!string.IsNullOrWhiteSpace(tryInterval)) o["try_interval"] = tryInterval;
+        return JsonSerializer.Serialize(o, Opt);
+    }
+
+    public static string HealthChecks(ActiveHealthCheckInput active, PassiveHealthCheckInput passive)
+    {
+        var o = new Dictionary<string, object>();
+        var a = BuildActive(active);
+        var p = BuildPassive(passive);
+        if (a is not null) o["active"] = a;
+        if (p is not null) o["passive"] = p;
+        return JsonSerializer.Serialize(o, Opt);
+    }
+
+    private static Dictionary<string, object>? BuildActive(ActiveHealthCheckInput x)
+    {
+        var a = new Dictionary<string, object>();
+        if (!string.IsNullOrWhiteSpace(x.Uri)) a["uri"] = x.Uri;
+        if (x.Port > 0) a["port"] = x.Port;
+        if (!string.IsNullOrWhiteSpace(x.Method)) a["method"] = x.Method;
+        if (!string.IsNullOrWhiteSpace(x.Interval)) a["interval"] = x.Interval;
+        if (!string.IsNullOrWhiteSpace(x.Timeout)) a["timeout"] = x.Timeout;
+        if (x.Passes > 0) a["passes"] = x.Passes;
+        if (x.Fails > 0) a["fails"] = x.Fails;
+        if (x.ExpectStatus > 0) a["expect_status"] = x.ExpectStatus;
+        if (!string.IsNullOrWhiteSpace(x.ExpectBody)) a["expect_body"] = x.ExpectBody;
+        return a.Count > 0 ? a : null;
+    }
+
+    private static Dictionary<string, object>? BuildPassive(PassiveHealthCheckInput x)
+    {
+        var p = new Dictionary<string, object>();
+        if (!string.IsNullOrWhiteSpace(x.FailDuration)) p["fail_duration"] = x.FailDuration;
+        if (x.MaxFails > 0) p["max_fails"] = x.MaxFails;
+        if (x.UnhealthyRequestCount > 0) p["unhealthy_request_count"] = x.UnhealthyRequestCount;
+        if (x.UnhealthyStatus.Count > 0) p["unhealthy_status"] = x.UnhealthyStatus.ToArray();
+        if (!string.IsNullOrWhiteSpace(x.UnhealthyLatency)) p["unhealthy_latency"] = x.UnhealthyLatency;
+        return p.Count > 0 ? p : null;
     }
 }

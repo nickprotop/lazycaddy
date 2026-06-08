@@ -29,12 +29,14 @@ public sealed class CaddyAdminClient : ICaddyAdmin, IDisposable
     private const int RateHistoryMax = 50;
 
     public CaddyAdminClient(LazyCaddyConfig config, bool simulateDisconnected = false)
+        : this(config, null, simulateDisconnected) { }
+
+    /// <summary>Test seam: inject a custom <see cref="HttpMessageHandler"/> (e.g. a stub).</summary>
+    internal CaddyAdminClient(LazyCaddyConfig config, HttpMessageHandler? handler, bool simulateDisconnected = false)
     {
-        _http = new HttpClient
-        {
-            BaseAddress = new Uri(config.AdminApiUrl.TrimEnd('/') + "/"),
-            Timeout = TimeSpan.FromMilliseconds(config.HttpTimeoutMs),
-        };
+        _http = (handler is null ? new HttpClient() : new HttpClient(handler));
+        _http.BaseAddress = new Uri(config.AdminApiUrl.TrimEnd('/') + "/");
+        _http.Timeout = TimeSpan.FromMilliseconds(config.HttpTimeoutMs);
         _simulateDisconnected = simulateDisconnected;
     }
 
@@ -159,6 +161,20 @@ public sealed class CaddyAdminClient : ICaddyAdmin, IDisposable
     public Task<WriteResult> PatchConfigAsync(string path, string json, CancellationToken ct = default)
         => SendWriteAsync(HttpMethod.Patch, $"config/{path}", json, ct);
 
+    public Task<WriteResult> PutConfigAsync(string path, string json, CancellationToken ct = default)
+        => SendWriteAsync(HttpMethod.Put, $"config/{path}", json, ct);
+
+    public async Task<WriteResult> UpsertConfigAsync(string path, string json, CancellationToken ct = default)
+    {
+        if (_simulateDisconnected) return WriteResult.Fail("Simulated disconnect.");
+        // PATCH replaces an existing node but 404s when the node is absent.
+        var (patch, patchStatus) = await SendWriteStatusAsync(HttpMethod.Patch, $"config/{path}", json, ct).ConfigureAwait(false);
+        if (patch.Success || patchStatus != System.Net.HttpStatusCode.NotFound)
+            return patch;
+        // Node was absent → PUT creates it.
+        return await SendWriteAsync(HttpMethod.Put, $"config/{path}", json, ct).ConfigureAwait(false);
+    }
+
     public Task<WriteResult> PostConfigAsync(string path, string json, CancellationToken ct = default)
         => SendWriteAsync(HttpMethod.Post, $"config/{path}", json, ct);
 
@@ -169,22 +185,27 @@ public sealed class CaddyAdminClient : ICaddyAdmin, IDisposable
         => SendWriteAsync(HttpMethod.Post, "load", fullConfigJson, ct);
 
     private async Task<WriteResult> SendWriteAsync(HttpMethod method, string relPath, string? json, CancellationToken ct)
+        => (await SendWriteStatusAsync(method, relPath, json, ct).ConfigureAwait(false)).Result;
+
+    /// <summary>As <see cref="SendWriteAsync"/> but also returns the HTTP status (for upsert fallback logic).</summary>
+    private async Task<(WriteResult Result, System.Net.HttpStatusCode Status)> SendWriteStatusAsync(
+        HttpMethod method, string relPath, string? json, CancellationToken ct)
     {
         if (_simulateDisconnected)
-            return WriteResult.Fail("Simulated disconnect.");
+            return (WriteResult.Fail("Simulated disconnect."), 0);
         try
         {
             using var req = new HttpRequestMessage(method, relPath);
             if (json is not null)
                 req.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
             using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
-            if (resp.IsSuccessStatusCode) return WriteResult.Ok;
+            if (resp.IsSuccessStatusCode) return (WriteResult.Ok, resp.StatusCode);
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            return WriteResult.Fail(string.IsNullOrWhiteSpace(body) ? $"HTTP {(int)resp.StatusCode}" : body);
+            return (WriteResult.Fail(string.IsNullOrWhiteSpace(body) ? $"HTTP {(int)resp.StatusCode}" : body), resp.StatusCode);
         }
         catch (Exception ex)
         {
-            return WriteResult.Fail(ex.Message);
+            return (WriteResult.Fail(ex.Message), 0);
         }
     }
 
