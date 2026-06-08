@@ -95,4 +95,36 @@ public class ServerConfigPatchTests
         Assert.False(r.TryGetProperty("writer", out _));
         Assert.False(r.TryGetProperty("level", out _));
     }
+
+    // Contract for LogOutputDialog's "(unchanged)" writer path: an unknown/polymorphic writer
+    // module (one the form can't represent) must SURVIVE a level-only edit, because the managed
+    // key set then EXCLUDES "writer" so MergeUnmanaged copies the original writer verbatim.
+    private static readonly System.Collections.Generic.HashSet<string> ManagedLogKeysNoWriter =
+        new() { "level", "include", "exclude" };
+    private static readonly System.Collections.Generic.HashSet<string> ManagedLogKeysWithWriter =
+        new() { "level", "include", "exclude", "writer" };
+
+    [Fact]
+    public void LogNode_UnknownWriter_PreservedThroughMerge_WhenOutputUnchanged()
+    {
+        var original = "{\"level\":\"INFO\",\"writer\":{\"output\":\"net\",\"address\":\"localhost:514\"}}";
+        var managed = ServerConfigPatch.LogNode("DEBUG",
+            System.Array.Empty<string>(), System.Array.Empty<string>(), ""); // no writer formed
+        var merged = Parse(HandlerPatch.MergeUnmanaged(original, managed, ManagedLogKeysNoWriter));
+        Assert.Equal("DEBUG", merged.GetProperty("level").GetString());          // managed wins for level
+        Assert.Equal("net", merged.GetProperty("writer").GetProperty("output").GetString());     // unknown writer kept
+        Assert.Equal("localhost:514", merged.GetProperty("writer").GetProperty("address").GetString());
+    }
+
+    [Fact]
+    public void LogNode_KnownWriter_ReplacesOriginal_WhenOutputChosen()
+    {
+        var original = "{\"writer\":{\"output\":\"net\",\"address\":\"localhost:514\"}}";
+        var managed = ServerConfigPatch.LogNode("",
+            System.Array.Empty<string>(), System.Array.Empty<string>(),
+            ServerConfigPatch.LogWriter("stdout", ""));
+        var merged = Parse(HandlerPatch.MergeUnmanaged(original, managed, ManagedLogKeysWithWriter));
+        Assert.Equal("stdout", merged.GetProperty("writer").GetProperty("output").GetString()); // replaced
+        Assert.False(merged.GetProperty("writer").TryGetProperty("address", out _));             // old field gone
+    }
 }
