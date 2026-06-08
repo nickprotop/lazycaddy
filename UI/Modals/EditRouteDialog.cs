@@ -115,7 +115,7 @@ public sealed class EditRouteDialog : ModalBase<bool>
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
         if (e.KeyInfo.Key == ConsoleKey.Escape) { CloseWithResult(false); e.Handled = true; return; }
-        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; _ = ApplyAsync(); }
+        if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; RunGuarded(ApplyAsync, ShowError); }
     }
 
     private async Task ApplyAsync()

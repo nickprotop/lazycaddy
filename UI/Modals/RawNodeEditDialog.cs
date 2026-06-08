@@ -49,7 +49,7 @@ public sealed class RawNodeEditDialog : ModalBase<bool>
         _error = Controls.Markup().WithMargin(2, 0, 2, 0).StickyBottom().Build();
         Modal.AddControl(_error);
 
-        _ = LoadAsync();
+        RunGuarded(LoadAsync, ShowError);
     }
 
     private async Task LoadAsync()
@@ -71,7 +71,7 @@ public sealed class RawNodeEditDialog : ModalBase<bool>
         if (e.KeyInfo.Key == ConsoleKey.S && (e.KeyInfo.Modifiers & ConsoleModifiers.Control) != 0)
         {
             e.Handled = true;
-            _ = ApplyAsync();
+            RunGuarded(ApplyAsync, ShowError);
         }
     }
 

@@ -51,7 +51,7 @@ public sealed class RouteEditorDialog : ModalBase<bool>
         _hint = Controls.Markup().WithMargin(2, 0, 2, 0).StickyBottom().Build();
         Modal.AddControl(_hint);
 
-        _ = LoadAsync();
+        RunGuarded(LoadAsync, m => _hint?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]{Escape(m)}[/]" }));
     }
 
     private async Task LoadAsync()
