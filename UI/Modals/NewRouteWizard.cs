@@ -1,9 +1,10 @@
 // -----------------------------------------------------------------------
-// LazyCaddy - guided "new reverse-proxy site" wizard. Collects a host and an
-// upstream dial, previews the new route JSON via DiffConfirmDialog, then POSTs
-// it to the server's routes list through the EditCoordinator (snapshot first).
+// LazyCaddy - guided "new route" wizard: collect a host(+path) matcher and a
+// handler type, create a minimal valid route, then open the matching handler
+// form so the user fills in details. Reuses every handler form via dispatch.
 // -----------------------------------------------------------------------
 
+using System.Text.Json;
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
@@ -16,8 +17,8 @@ public sealed class NewRouteWizard : ModalBase<bool>
 {
     private readonly EditCoordinator _editor;
     private readonly string _serverPath; // e.g. apps/http/servers/srv0
-    private PromptControl? _host;
-    private PromptControl? _upstream;
+    private PromptControl? _host, _path;
+    private DropdownControl? _type;
     private MarkupControl? _error;
 
     private NewRouteWizard(EditCoordinator editor, string serverPath) { _editor = editor; _serverPath = serverPath; }
@@ -25,19 +26,23 @@ public sealed class NewRouteWizard : ModalBase<bool>
     public static Task<bool> ShowAsync(ConsoleWindowSystem ws, EditCoordinator editor, string serverPath, Window? parent = null)
         => ((ModalBase<bool>)new NewRouteWizard(editor, serverPath)).ShowAsync(ws, parent);
 
-    protected override string GetTitle() => " New reverse-proxy site ";
-    protected override (int width, int height) GetSize() => (70, 14);
+    protected override string GetTitle() => " New route ";
+    protected override (int width, int height) GetSize() => (74, 15);
     protected override bool GetDefaultResult() => false;
 
     protected override void BuildContent()
     {
         var muted = UIConstants.MutedText.ToMarkup();
-        Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Create host → upstream reverse proxy.[/]").WithMargin(2, 1, 2, 0).Build());
-        _host = Controls.Prompt("Host:     ").WithInputWidth(48).Build();
-        _upstream = Controls.Prompt("Upstream: ").WithInputWidth(48).Build();
-        Modal.AddControl(_host); Modal.AddControl(_upstream);
+        Modal.AddControl(Controls.Markup()
+            .AddLine($"[{muted}]Host/path optional (empty = catch-all). Pick a handler type; its form opens next.[/]")
+            .WithMargin(2, 1, 2, 0).Build());
+        _host = Controls.Prompt("Host(s):  ").WithInputWidth(48).Build();
+        _path = Controls.Prompt("Path(s):  ").WithInputWidth(48).Build();
+        _type = Controls.Dropdown("Handler:  ")
+            .AddItems(NewRouteSkeleton.OfferedTypes.Select(t => $"{t.Icon} {t.DisplayName}").ToArray()).Build();
+        Modal.AddControl(_host); Modal.AddControl(_path); Modal.AddControl(_type);
         _error = Controls.Markup().WithMargin(2, 1, 2, 0).Build(); Modal.AddControl(_error);
-        Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Enter: apply   Esc: cancel[/]").WithMargin(2, 0, 2, 0).StickyBottom().Build());
+        Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Enter: create   Esc: cancel[/]").WithMargin(2, 0, 2, 0).StickyBottom().Build());
     }
 
     protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
@@ -46,19 +51,58 @@ public sealed class NewRouteWizard : ModalBase<bool>
         if (e.KeyInfo.Key == ConsoleKey.Enter) { e.Handled = true; RunGuarded(ApplyAsync, Err); }
     }
 
+    private static string[] Csv(string? s) =>
+        (s ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
     private async Task ApplyAsync()
     {
-        var host = (_host?.Input ?? "").Trim();
-        var up = (_upstream?.Input ?? "").Trim();
-        if (host.Length == 0 || up.Length == 0) { Err("Host and upstream are required."); return; }
+        var idx = _type?.SelectedIndex ?? -1;
+        if (idx < 0 || idx >= NewRouteSkeleton.OfferedTypes.Count) { Err("Pick a handler type."); return; }
+        var chosen = NewRouteSkeleton.OfferedTypes[idx].Type;
 
-        var newJson = EditPatchBuilder.ReverseProxyRoute(host, up);
-        if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Add route", "(new)", newJson, Modal)) return;
+        var hosts = Csv(_host?.Input);
+        var paths = Csv(_path?.Input);
+        var handler = NewRouteSkeleton.MinimalHandler(chosen);
 
+        // Build the route: { [match], handle:[<minimal handler>] }. Omit match when no host/path.
+        string routeJson;
+        using (var hd = JsonDocument.Parse(handler))
+        {
+            var route = new Dictionary<string, object>();
+            if (hosts.Length > 0 || paths.Length > 0)
+            {
+                using var md = JsonDocument.Parse(EditPatchBuilder.HostPathMatcher(hosts, paths));
+                route["match"] = md.RootElement.Clone();
+            }
+            route["handle"] = new[] { hd.RootElement.Clone() };
+            routeJson = JsonSerializer.Serialize(route, new JsonSerializerOptions { WriteIndented = true });
+        }
+
+        if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Add route", "(new)", routeJson, Modal)) return;
+
+        var hostLabel = hosts.Length > 0 ? string.Join(", ", hosts) : "(catch-all)";
         var result = await _editor.ApplyAsync(
-            (admin, ct) => admin.PostConfigAsync($"{_serverPath}/routes", newJson, ct),
-            $"add route {host} → {up}");
-        if (result.Success) CloseWithResult(true); else Err(result.Error ?? "Write failed.");
+            (admin, ct) => admin.PostConfigAsync($"{_serverPath}/routes", routeJson, ct),
+            $"add route {hostLabel} [{chosen}]");
+        if (!result.Success) { Err(result.Error ?? "Write failed."); return; }
+
+        // Find the new route's index (it was appended) and open the matching handler form.
+        int newIndex;
+        try
+        {
+            var routesJson = await _editor.GetConfigNodeAsync($"{_serverPath}/routes");
+            using var rd = JsonDocument.Parse(routesJson);
+            newIndex = rd.RootElement.ValueKind == JsonValueKind.Array ? rd.RootElement.GetArrayLength() - 1 : 0;
+        }
+        catch { newIndex = 0; }
+
+        // Open the matching handler form WHILE this wizard is still open, parented to its live
+        // Modal (the established pattern — see RouteEditorDialog.EditSelectedAsync). Closing the
+        // wizard first would orphan the form on a closed window. The route already exists, so if
+        // the user cancels the form the minimal-but-valid route remains.
+        var handlerPath = $"{_serverPath}/routes/{newIndex}/handle/0";
+        await HandlerFormDispatch.OpenAsync(WindowSystem, NewRouteSkeleton.FormType(chosen), handlerPath, _editor, Modal);
+        CloseWithResult(true);
     }
 
     private void Err(string m) =>
