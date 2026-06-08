@@ -67,12 +67,14 @@ public sealed class ReverseProxyForm : ModalBase<bool>
                 {
                     _upstreamList.ClearRows();
                     foreach (var dial in dials) _upstreamList.AddRow(new TableRow(dial));
-                    if (dials.Count > 0) _upstreamList.SelectedRowIndex = 0;
+                    _upstreamList.SelectedRowIndex = 0; // reset even when empty so no stale index survives
                 }
             }
         }
-        catch (JsonException ex) { Err($"Could not parse upstreams: {ex.Message}"); }
-        catch { }
+        // On any failure, force _upstreamCount to 0 (fail-safe — the <=1 guard then blocks delete,
+        // so a silently-stale count from a previous load can never bypass the last-upstream guard).
+        catch (JsonException ex) { _upstreamCount = 0; Err($"Could not parse upstreams: {ex.Message}"); }
+        catch (Exception ex) { _upstreamCount = 0; Err($"Could not load upstreams: {ex.Message}"); }
 
         try
         {
