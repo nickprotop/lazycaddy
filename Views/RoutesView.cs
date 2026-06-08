@@ -62,7 +62,7 @@ public sealed class RoutesView
 
     private void EditRoute()
     {
-        if (Selected is { } route) _ = EditRouteDialog.ShowAsync(_windowSystem, route, _editor);
+        if (Selected is { } route) _ = RouteEditorDialog.ShowAsync(_windowSystem, route, _editor);
     }
 
     private void NewRoute()
@@ -217,7 +217,7 @@ public sealed class RoutesView
         _table.RowActivatedAsync += async (sender, rowIndex) =>
         {
             if (_table?.SelectedRow?.Tag is Route r)
-                await EditRouteDialog.ShowAsync(_windowSystem, r, _editor);
+                await RouteEditorDialog.ShowAsync(_windowSystem, r, _editor);
         };
 
         // Adaptive toolbar: rebuild when the selection changes so context buttons
