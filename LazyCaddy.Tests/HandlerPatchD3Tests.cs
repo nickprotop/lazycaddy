@@ -110,6 +110,22 @@ public class HandlerPatchD3Tests
     }
 
     [Fact]
+    public void Headers_ResponseOpsWithNullRequire_EmitsResponseWithoutRequire()
+    {
+        // A response with real ops but no require must produce a response block that
+        // contains NO require key (guards against an empty require:{} regression).
+        var resp = new HeaderOpsInput(
+            Add: new[] { ("X-B", "2") }, Set: System.Array.Empty<(string, string)>(),
+            Delete: System.Array.Empty<string>(),
+            Replace: System.Array.Empty<(string, string, string, bool)>());
+        var json = HandlerPatch.Headers(HeaderOpsInput.Empty, resp, null);
+        var r = Parse(json);
+        Assert.True(r.TryGetProperty("response", out var respNode));
+        Assert.False(respNode.TryGetProperty("require", out _));
+        Assert.Equal("2", respNode.GetProperty("add").GetProperty("X-B")[0].GetString());
+    }
+
+    [Fact]
     public void ManagedFileServerKeys_CoversEmittedKeys_ExcludesBrowseAndPolymorphic()
     {
         var keys = HandlerPatch.ManagedFileServerKeys;
