@@ -67,7 +67,7 @@ public sealed class RouteEditorDialog : ModalBase<bool>
             var routeJson = await _editor.GetConfigNodeAsync(_route.ConfigPath);
             var descriptors = RouteModel.ParseHandlers(routeJson, _route.ConfigPath);
             if (_handlers is null) return;
-            _handlerCount = descriptors.Count;
+            _handlerCount = descriptors.Count(x => x.Depth == 0); // top-level handlers only
             _handlers.ClearRows();
             foreach (var d in descriptors)
             {
@@ -127,9 +127,10 @@ public sealed class RouteEditorDialog : ModalBase<bool>
     private async Task DeleteHandlerAsync()
     {
         if (_handlers?.SelectedRow?.Tag is not HandlerDescriptor d) return;
-        // Only top-level handlers of THIS route: path must be "{route}/handle/N".
-        var prefix = $"{_route.ConfigPath}/handle/";
-        if (!d.ConfigPath.StartsWith(prefix, StringComparison.Ordinal))
+        // Only top-level handlers of THIS route. A nested handler's path
+        // ({route}/handle/0/routes/M/handle/K) also starts with "{route}/handle/", so a
+        // StartsWith check would not exclude it — gate on Depth instead (Depth>0 = nested).
+        if (d.Depth > 0)
         { ShowHintError("Select a top-level handler to delete (edit nested ones via the subroute)."); return; }
         if (!await ConfirmDeleteDialog.ShowAsync(WindowSystem, $"handler {d.Type}", Modal)) return;
         var r = await _editor.ApplyAsync(
