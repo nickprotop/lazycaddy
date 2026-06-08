@@ -16,6 +16,7 @@ using System.Text.Json;
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
+using SharpConsoleUI.Layout;
 using LazyCaddy.Configuration;
 using LazyCaddy.Dashboard;
 using LazyCaddy.Services;
@@ -35,6 +36,7 @@ public sealed class ServerView
         _adminListen, _httpPort, _httpsPort, _grace;
     private CheckboxControl? _h1, _h2, _h3, _disable, _disableRedir, _disableCerts;
     private DropdownControl? _server;
+    private TableControl? _logs;
     private MarkupControl? _status;
     private ToolbarControl? _toolbar;
 
@@ -66,7 +68,7 @@ public sealed class ServerView
 
         panel.AddControl(Controls.Markup()
             .AddLine($"[bold {accent}]Server[/]")
-            .AddLine($"[{muted}]HTTP-server settings + global/admin options. Edit a field, then Apply (s).[/]")
+            .AddLine($"[{muted}]HTTP-server settings + global/admin options. Edit a field, then Apply (s). Enter/e on a log row edits it.[/]")
             .AddEmptyLine()
             .Build());
 
@@ -125,6 +127,16 @@ public sealed class ServerView
         panel.AddControl(_httpsPort);
         panel.AddControl(_grace);
 
+        // ── LOGGING ── read-only table of logging/logs entries; Enter/e edits a log.
+        panel.AddControl(Section("LOGGING", accent));
+        _logs = Controls.Table()
+            .AddColumn("Log", TextJustification.Left, 24)
+            .AddColumn("Detail", TextJustification.Left)
+            .Rounded().WithBorderColor(UIConstants.MutedText)
+            .Interactive().WithVerticalScrollbar(ScrollbarVisibility.Auto)
+            .WithName("serverLogs").WithMargin(2, 0, 2, 0).Build();
+        panel.AddControl(_logs);
+
         _status = Controls.Markup().WithMargin(2, 1, 2, 0).StickyBottom().Build();
         panel.AddControl(_status);
 
@@ -170,6 +182,15 @@ public sealed class ServerView
 
     public bool TryHandleKey(ConsoleKeyInfo key)
     {
+        // Logs table edit: only consume Enter/e when the read-only logs table has focus, so
+        // these keys aren't stolen from the form fields elsewhere.
+        if ((_logs?.HasFocus ?? false) && (key.Key == ConsoleKey.Enter || key.Key == ConsoleKey.E))
+        {
+            if (_logs!.SelectedRow?.Tag is string logName && !string.IsNullOrEmpty(logName))
+                _ = OpenLogAsync(logName);
+            return true;
+        }
+
         if (!HasAnyFocus()) return false;
         switch (key.Key)
         {
@@ -180,13 +201,19 @@ public sealed class ServerView
         }
     }
 
+    private async Task OpenLogAsync(string logName)
+    {
+        var changed = await LogOutputDialog.ShowAsync(_ws, logName, _editor);
+        if (changed) _onRefresh();
+    }
+
     private bool HasAnyFocus() =>
         (_listen?.HasFocus ?? false) || (_skip?.HasFocus ?? false) || (_readTo?.HasFocus ?? false) ||
         (_readHdrTo?.HasFocus ?? false) || (_writeTo?.HasFocus ?? false) || (_idleTo?.HasFocus ?? false) ||
         (_adminListen?.HasFocus ?? false) || (_httpPort?.HasFocus ?? false) || (_httpsPort?.HasFocus ?? false) ||
         (_grace?.HasFocus ?? false) || (_h1?.HasFocus ?? false) || (_h2?.HasFocus ?? false) ||
         (_h3?.HasFocus ?? false) || (_disable?.HasFocus ?? false) || (_disableRedir?.HasFocus ?? false) ||
-        (_disableCerts?.HasFocus ?? false) || (_server?.HasFocus ?? false);
+        (_disableCerts?.HasFocus ?? false) || (_server?.HasFocus ?? false) || (_logs?.HasFocus ?? false);
 
     // ── Update (poll tick, UI thread) ──
 
@@ -194,6 +221,11 @@ public sealed class ServerView
     {
         var snap = state.Snapshot;
         if (snap is null || _listen is null) return;
+
+        // The logging table is READ-ONLY (not an editable field), so refresh it on every poll —
+        // even while the form is frozen by an in-progress edit. This is the one part that updates
+        // while dirty, and it's intentional/safe (it can't clobber user input).
+        PopulateLogs(snap.RawConfigJson);
 
         // Detect an in-progress edit and freeze repopulation so a poll can't clobber input.
         if (!_dirty && HasUnsavedChanges()) _dirty = true;
@@ -321,6 +353,52 @@ public sealed class ServerView
         _server.ClearItems();
         foreach (var s in servers) _server.AddItem(s);
         if (servers.Count > 0) _server.SelectedIndex = 0;
+    }
+
+    // Repopulate the read-only logging table from logging/logs. Runs every poll (even while the
+    // editable form is frozen) since it's display-only. Preserves the selected row index.
+    private void PopulateLogs(string rawJson)
+    {
+        if (_logs is null) return;
+        int prev = _logs.SelectedRowIndex;
+        _logs.ClearRows();
+        int count = 0;
+        try
+        {
+            using var doc = JsonDocument.Parse(rawJson);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("logging", out var logging) && logging.ValueKind == JsonValueKind.Object &&
+                logging.TryGetProperty("logs", out var logs) && logs.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var p in logs.EnumerateObject())
+                {
+                    _logs.AddRow(new TableRow(Escape(p.Name), Escape(LogSummary(p.Value))) { Tag = p.Name });
+                    count++;
+                }
+            }
+        }
+        catch { /* malformed config: leave the table empty */ }
+        if (count > 0)
+            _logs.SelectedRowIndex = prev >= 0 && prev < count ? prev : 0;
+    }
+
+    // A one-line summary of a log: "level · writer-output" plus include/exclude counts when present.
+    private static string LogSummary(JsonElement log)
+    {
+        if (log.ValueKind != JsonValueKind.Object) return "";
+        var parts = new List<string>();
+        if (log.TryGetProperty("level", out var lv) && lv.ValueKind == JsonValueKind.String)
+            parts.Add(lv.GetString() ?? "");
+        if (log.TryGetProperty("writer", out var w) && w.ValueKind == JsonValueKind.Object &&
+            w.TryGetProperty("output", out var ov) && ov.ValueKind == JsonValueKind.String)
+            parts.Add(ov.GetString() ?? "");
+        var filters = new List<string>();
+        if (log.TryGetProperty("include", out var inc) && inc.ValueKind == JsonValueKind.Array && inc.GetArrayLength() > 0)
+            filters.Add($"include:{inc.GetArrayLength()}");
+        if (log.TryGetProperty("exclude", out var exc) && exc.ValueKind == JsonValueKind.Array && exc.GetArrayLength() > 0)
+            filters.Add($"exclude:{exc.GetArrayLength()}");
+        if (filters.Count > 0) parts.Add(string.Join(" ", filters));
+        return parts.Count > 0 ? string.Join(" · ", parts) : "(defaults)";
     }
 
     // ── Change detection ──
