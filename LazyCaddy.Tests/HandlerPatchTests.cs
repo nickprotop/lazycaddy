@@ -9,22 +9,15 @@ public class HandlerPatchTests
     [Fact]
     public void FileServer_BuildsRootIndexHide()
     {
-        var json = HandlerPatch.FileServer(root: "/var/www", indexNames: new[] { "index.html" },
-            hide: new[] { ".git" }, browse: false, passThru: false);
+        var json = HandlerPatch.FileServer(new FileServerInput(
+            Root: "/var/www", IndexNames: new[] { "index.html" }, Hide: new[] { ".git" },
+            PassThru: false, PrecompressedOrder: System.Array.Empty<string>(),
+            StatusCode: "", CanonicalUrisSet: false, CanonicalUris: false));
         using var d = JsonDocument.Parse(json);
         Assert.Equal("file_server", d.RootElement.GetProperty("handler").GetString());
         Assert.Equal("/var/www", d.RootElement.GetProperty("root").GetString());
         Assert.Equal("index.html", d.RootElement.GetProperty("index_names")[0].GetString());
         Assert.False(d.RootElement.TryGetProperty("browse", out _));
-    }
-
-    [Fact]
-    public void FileServer_BrowseOn_AddsEmptyBrowseObject()
-    {
-        var json = HandlerPatch.FileServer("/srv", System.Array.Empty<string>(), System.Array.Empty<string>(), browse: true, passThru: true);
-        using var d = JsonDocument.Parse(json);
-        Assert.Equal(JsonValueKind.Object, d.RootElement.GetProperty("browse").ValueKind);
-        Assert.True(d.RootElement.GetProperty("pass_thru").GetBoolean());
     }
 
     [Fact]

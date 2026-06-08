@@ -12,7 +12,16 @@ namespace LazyCaddy.Services;
 public sealed record HeaderOpsInput(
     IReadOnlyList<(string Name, string Value)> Add,
     IReadOnlyList<(string Name, string Value)> Set,
-    IReadOnlyList<string> Delete);
+    IReadOnlyList<string> Delete,
+    IReadOnlyList<(string Header, string Search, string Replace, bool IsRegex)> Replace)
+{
+    public static HeaderOpsInput Empty => new(
+        System.Array.Empty<(string, string)>(), System.Array.Empty<(string, string)>(),
+        System.Array.Empty<string>(), System.Array.Empty<(string, string, string, bool)>());
+}
+
+public sealed record ResponseRequireInput(
+    IReadOnlyList<int> StatusCode, IReadOnlyList<(string Name, string Value)> Headers);
 
 public sealed record ActiveHealthCheckInput(string Uri, int Port, string Method, string Interval,
     string Timeout, int Passes, int Fails, int ExpectStatus, string ExpectBody);
@@ -35,21 +44,47 @@ public sealed record KeepAliveInput(
     bool EnabledSet, bool Enabled, string IdleTimeout, string ProbeInterval,
     int MaxIdleConns, int MaxIdleConnsPerHost);
 
+public sealed record BrowseInput(
+    string TemplateFile, bool RevealSymlinks, IReadOnlyList<string> Sort, int FileLimit);
+
+public sealed record FileServerInput(
+    string Root, IReadOnlyList<string> IndexNames, IReadOnlyList<string> Hide, bool PassThru,
+    IReadOnlyList<string> PrecompressedOrder, string StatusCode, bool CanonicalUrisSet, bool CanonicalUris);
+
 public static class HandlerPatch
 {
     private static readonly JsonSerializerOptions Opt = new() { WriteIndented = true };
 
-    public static string FileServer(string root, IEnumerable<string> indexNames,
-        IEnumerable<string> hide, bool browse, bool passThru)
+    public static readonly IReadOnlySet<string> ManagedFileServerKeys = new HashSet<string>
+    {
+        "handler", "root", "index_names", "hide", "pass_thru",
+        "precompressed_order", "status_code", "canonical_uris"
+    };
+
+    public static string FileServer(FileServerInput x)
     {
         var o = new Dictionary<string, object> { ["handler"] = "file_server" };
-        if (!string.IsNullOrWhiteSpace(root)) o["root"] = root;
-        var idx = indexNames.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        if (!string.IsNullOrWhiteSpace(x.Root)) o["root"] = x.Root;
+        var idx = x.IndexNames.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
         if (idx.Length > 0) o["index_names"] = idx;
-        var hd = hide.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        var hd = x.Hide.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
         if (hd.Length > 0) o["hide"] = hd;
-        if (browse) o["browse"] = new Dictionary<string, object>();
-        if (passThru) o["pass_thru"] = true;
+        if (x.PassThru) o["pass_thru"] = true;
+        var pre = x.PrecompressedOrder.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        if (pre.Length > 0) o["precompressed_order"] = pre;
+        if (!string.IsNullOrWhiteSpace(x.StatusCode)) o["status_code"] = x.StatusCode;
+        if (x.CanonicalUrisSet) o["canonical_uris"] = x.CanonicalUris;
+        return JsonSerializer.Serialize(o, Opt);
+    }
+
+    public static string Browse(BrowseInput x)
+    {
+        var o = new Dictionary<string, object>();
+        if (!string.IsNullOrWhiteSpace(x.TemplateFile)) o["template_file"] = x.TemplateFile;
+        if (x.RevealSymlinks) o["reveal_symlinks"] = true;
+        var sort = x.Sort.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        if (sort.Length > 0) o["sort"] = sort;
+        if (x.FileLimit > 0) o["file_limit"] = x.FileLimit;
         return JsonSerializer.Serialize(o, Opt);
     }
 
@@ -80,17 +115,17 @@ public static class HandlerPatch
         return JsonSerializer.Serialize(o, Opt);
     }
 
-    public static string Headers(HeaderOpsInput request, HeaderOpsInput response)
+    public static string Headers(HeaderOpsInput request, HeaderOpsInput response, ResponseRequireInput? responseRequire)
     {
         var o = new Dictionary<string, object> { ["handler"] = "headers" };
-        var req = BuildHeaderOps(request);
-        var resp = BuildHeaderOps(response);
+        var req = BuildHeaderOps(request, null);
+        var resp = BuildHeaderOps(response, responseRequire);
         if (req is not null) o["request"] = req;
         if (resp is not null) o["response"] = resp;
         return JsonSerializer.Serialize(o, Opt);
     }
 
-    private static Dictionary<string, object>? BuildHeaderOps(HeaderOpsInput ops)
+    private static Dictionary<string, object>? BuildHeaderOps(HeaderOpsInput ops, ResponseRequireInput? require)
     {
         var result = new Dictionary<string, object>();
         var add = ToHeaderMap(ops.Add);
@@ -99,7 +134,40 @@ public static class HandlerPatch
         if (add.Count > 0) result["add"] = add;
         if (set.Count > 0) result["set"] = set;
         if (del.Length > 0) result["delete"] = del;
+        var replace = BuildReplace(ops.Replace);
+        if (replace.Count > 0) result["replace"] = replace;
+        if (require is not null)
+        {
+            var req = BuildRequire(require);
+            if (req is not null) result["require"] = req;
+        }
         return result.Count > 0 ? result : null;
+    }
+
+    private static Dictionary<string, object> BuildReplace(IReadOnlyList<(string Header, string Search, string Replace, bool IsRegex)> items)
+    {
+        var m = new Dictionary<string, object>();
+        foreach (var (header, search, repl, isRegex) in items)
+        {
+            if (string.IsNullOrWhiteSpace(header)) continue;
+            var entry = new Dictionary<string, object>();
+            if (isRegex) { if (!string.IsNullOrWhiteSpace(search)) entry["search_regexp"] = search; }
+            else { if (!string.IsNullOrWhiteSpace(search)) entry["search"] = search; }
+            entry["replace"] = repl ?? "";
+            if (!m.TryGetValue(header, out var listObj)) m[header] = listObj = new List<Dictionary<string, object>>();
+            ((List<Dictionary<string, object>>)listObj).Add(entry);
+        }
+        return m;
+    }
+
+    private static Dictionary<string, object>? BuildRequire(ResponseRequireInput x)
+    {
+        var o = new Dictionary<string, object>();
+        var codes = x.StatusCode.Where(c => c > 0).ToArray();
+        if (codes.Length > 0) o["status_code"] = codes;
+        var headers = ToHeaderMap(x.Headers);
+        if (headers.Count > 0) o["headers"] = headers;
+        return o.Count > 0 ? o : null;
     }
 
     private static Dictionary<string, string[]> ToHeaderMap(IReadOnlyList<(string Name, string Value)> pairs)
