@@ -34,6 +34,7 @@ public sealed class DashboardShell
     private readonly RawConfigView _rawConfig;
     private readonly SnapshotsView _snapshots;
     private readonly TopologyView _topology = new();
+    private readonly ServerView _server;
 
     private Window? _window;
     private NavigationView? _nav;
@@ -62,6 +63,7 @@ public sealed class DashboardShell
         _upstreams = new UpstreamsView();
         _rawConfig = new RawConfigView(ws, editor);
         _snapshots = new SnapshotsView(ws, editor);
+        _server = new ServerView(ws, editor, RequestRefresh);
     }
 
     public void Create()
@@ -139,6 +141,8 @@ public sealed class DashboardShell
                     content: WithInitialData(_snapshots.Build, _snapshots.Update));
                 h.AddItem("Topology", icon: "⌗", subtitle: "Routing graph",
                     content: WithInitialData(_topology.Build, _topology.Update));
+                h.AddItem("Server", icon: "⚙", subtitle: "Server & global settings",
+                    content: WithInitialData(_server.Build, _server.Update));
             })
             .WithAlignment(HorizontalAlignment.Stretch)
             .WithVerticalAlignment(VerticalAlignment.Fill)
@@ -188,12 +192,12 @@ public sealed class DashboardShell
 
     private void Quit() => _ws.Shutdown(0);
 
-    // Number keys 1..7 jump to the matching view. The nav item list has a single
-    // Header at index 0 ("Caddy"), then the 7 views at indices 1..7 in order:
-    // 1 Overview · 2 Routes · 3 TLS/Certs · 4 Upstreams · 5 Raw Config · 6 Snapshots · 7 Topology.
+    // Number keys 1..8 jump to the matching view. The nav item list has a single
+    // Header at index 0 ("Caddy"), then the 8 views at indices 1..8 in order:
+    // 1 Overview · 2 Routes · 3 TLS/Certs · 4 Upstreams · 5 Raw Config · 6 Snapshots · 7 Topology · 8 Server.
     // So SelectedIndex == digit (header offset of 1). This handler only fires for the
     // main window; modal prompts capture their own keys, so digits aren't hijacked.
-    private const int ViewCount = 7;
+    private const int ViewCount = 8;
 
     private void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
@@ -208,6 +212,7 @@ public sealed class DashboardShell
         if (_certs.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_snapshots.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_rawConfig.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
+        if (_server.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
 
         switch (e.KeyInfo.Key)
         {
@@ -230,13 +235,13 @@ public sealed class DashboardShell
         }
     }
 
-    /// <summary>Map D1..D7 / NumPad1..NumPad7 to a 1-based view index. False otherwise.</summary>
+    /// <summary>Map D1..D8 / NumPad1..NumPad8 to a 1-based view index. False otherwise.</summary>
     private static bool TryDigit(ConsoleKeyInfo key, out int view)
     {
         view = key.Key switch
         {
-            >= ConsoleKey.D1 and <= ConsoleKey.D7 => key.Key - ConsoleKey.D1 + 1,
-            >= ConsoleKey.NumPad1 and <= ConsoleKey.NumPad7 => key.Key - ConsoleKey.NumPad1 + 1,
+            >= ConsoleKey.D1 and <= ConsoleKey.D8 => key.Key - ConsoleKey.D1 + 1,
+            >= ConsoleKey.NumPad1 and <= ConsoleKey.NumPad8 => key.Key - ConsoleKey.NumPad1 + 1,
             _ => 0,
         };
         return view is >= 1 and <= ViewCount;
@@ -335,6 +340,7 @@ public sealed class DashboardShell
         _rawConfig.Update(_state);
         _snapshots.Update(_state);
         _topology.Update(_state);
+        _server.Update(_state);
     }
 
     private void ApplyStatusBar(string? spinner)
