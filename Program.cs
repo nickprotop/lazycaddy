@@ -1,7 +1,8 @@
 // -----------------------------------------------------------------------
-// LazyCaddy - a read-only TUI dashboard for a running Caddy server.
-// Built on SharpConsoleUI (ConsoleEx). Polls Caddy's admin API and displays
-// routes, TLS certs, and upstream reachability. No write operations.
+// LazyCaddy - a TUI for managing a running Caddy server via its admin API.
+// Built on SharpConsoleUI (ConsoleEx). Polls Caddy's admin API to display
+// routes, handler chains, TLS certs, and upstream health, and writes guided,
+// snapshot-backed edits (PATCH/POST/DELETE and /load) back through it.
 // -----------------------------------------------------------------------
 
 using SharpConsoleUI;
@@ -162,7 +163,7 @@ internal static class Program
     {
         Console.WriteLine(
             """
-            lazycaddy — a read-only TUI dashboard for a running Caddy server.
+            lazycaddy — a TUI for managing a running Caddy server via its admin API.
 
             Usage:
               lazycaddy [URL]

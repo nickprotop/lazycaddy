@@ -1,0 +1,61 @@
+name: Build
+
+on:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+    tags-ignore:
+      - '**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        rid: [linux-x64, linux-arm64]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Build the app project directly (not the .sln): the .sln references the local
+      # ../ConsoleEx sibling, which is absent in CI. The csproj (and the test project)
+      # fall back to the SharpConsoleUI NuGet package when that sibling doesn't exist.
+      - name: Restore
+        run: dotnet restore lazycaddy.csproj
+
+      - name: Build
+        run: dotnet build lazycaddy.csproj -c Release --no-restore
+
+      - name: Publish ${{ matrix.rid }}
+        run: |
+          dotnet publish lazycaddy.csproj -c Release \
+            -r ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishSingleFile=true
+
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The test project references only the app csproj (which uses the NuGet fallback in
+      # CI), so it builds without the ConsoleEx sibling or the .sln.
+      - name: Test
+        run: dotnet test LazyCaddy.Tests/LazyCaddy.Tests.csproj -c Release --verbosity normal

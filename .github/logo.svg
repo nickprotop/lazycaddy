@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 140">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e2840;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0a0a14;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#4ecdc4;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#00d4aa;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="600" height="140" rx="16" fill="url(#bg)" />
+
+  <!-- Border -->
+  <rect x="1" y="1" width="598" height="138" rx="15" fill="none" stroke="#2a3550" stroke-width="1.5" />
+
+  <!-- Routing-graph icon: host node -> reverse_proxy -> upstream (the app's identity) -->
+  <g transform="translate(34, 44)">
+    <!-- host node -->
+    <rect x="0" y="14" width="22" height="22" rx="4" fill="none" stroke="url(#accent)" stroke-width="2.5" />
+    <circle cx="11" cy="25" r="3.5" fill="url(#accent)" />
+    <!-- edge host -> proxy -->
+    <line x1="22" y1="25" x2="36" y2="25" stroke="#4ecdc4" stroke-width="2" stroke-linecap="round" opacity="0.85" />
+    <!-- proxy node (center, the routing hub) -->
+    <rect x="36" y="8" width="24" height="34" rx="4" fill="none" stroke="url(#accent)" stroke-width="2.5" />
+    <line x1="42" y1="18" x2="54" y2="18" stroke="#4ecdc4" stroke-width="2" stroke-linecap="round" />
+    <line x1="42" y1="25" x2="54" y2="25" stroke="#4ecdc4" stroke-width="2" stroke-linecap="round" />
+    <line x1="42" y1="32" x2="54" y2="32" stroke="#4ecdc4" stroke-width="2" stroke-linecap="round" />
+    <!-- edges proxy -> two upstreams (fan-out) -->
+    <path d="M60 25 H70 V13 H80" fill="none" stroke="#27c93f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" />
+    <path d="M60 25 H70 V37 H80" fill="none" stroke="#27c93f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" />
+    <!-- upstream nodes (healthy = green dots) -->
+    <circle cx="84" cy="13" r="4.5" fill="none" stroke="#27c93f" stroke-width="2" />
+    <circle cx="84" cy="13" r="1.8" fill="#27c93f" />
+    <circle cx="84" cy="37" r="4.5" fill="none" stroke="#27c93f" stroke-width="2" />
+    <circle cx="84" cy="37" r="1.8" fill="#27c93f" />
+  </g>
+
+  <!-- lazycaddy wordmark -->
+  <text x="150" y="82" font-family="'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', Consolas, monospace" font-size="46" font-weight="700" letter-spacing="1">
+    <tspan fill="url(#accent)">lazy</tspan><tspan fill="#e8e8e8">caddy</tspan>
+  </text>
+
+  <!-- Tagline -->
+  <text x="152" y="108" font-family="'SF Mono', 'Fira Code', 'JetBrains Mono', Consolas, monospace" font-size="14" fill="#6a7a9a" letter-spacing="3">
+    CADDY ADMIN TUI
+  </text>
+
+  <!-- Terminal cursor blink -->
+  <rect x="430" y="60" width="3" height="28" fill="#4ecdc4" opacity="0.7">
+    <animate attributeName="opacity" values="0.7;0;0.7" dur="1.2s" repeatCount="indefinite" />
+  </rect>
+
+  <!-- Decorative dots (like terminal status) -->
+  <circle cx="540" cy="40" r="4" fill="#ff5f56" opacity="0.8" />
+  <circle cx="556" cy="40" r="4" fill="#ffbd2e" opacity="0.8" />
+  <circle cx="572" cy="40" r="4" fill="#27c93f" opacity="0.8" />
+</svg>
