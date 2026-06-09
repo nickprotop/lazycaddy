@@ -5,6 +5,7 @@
 
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
+using SharpConsoleUI.Extensions;
 using SharpConsoleUI.Layout;
 using LazyCaddy.Configuration;
 using LazyCaddy.Dashboard;
@@ -49,6 +50,9 @@ public sealed class UpstreamsView
         panel.AddControl(_table);
         _renderedSignature = null;   // fresh table on reopen — force first Update to populate
     }
+
+    /// <summary>Focus the upstreams table so its keys work immediately on view entry.</summary>
+    public void FocusPrimary() => _table?.RequestFocus();
 
     public void Update(DashboardState state)
     {

@@ -16,6 +16,7 @@ using System.Text.Json;
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
+using SharpConsoleUI.Extensions;
 using SharpConsoleUI.Layout;
 using LazyCaddy.Configuration;
 using LazyCaddy.Dashboard;
@@ -74,6 +75,9 @@ public sealed class ServerView
         _editor = editor;
         _onRefresh = onRefresh;
     }
+
+    /// <summary>Focus the server selector so the form is navigable immediately on view entry.</summary>
+    public void FocusPrimary() => _server?.RequestFocus();
 
     public void Build(ScrollablePanelControl panel)
     {

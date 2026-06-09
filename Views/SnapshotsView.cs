@@ -6,6 +6,7 @@
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
+using SharpConsoleUI.Extensions;
 using SharpConsoleUI.Layout;
 using LazyCaddy.Configuration;
 using LazyCaddy.Dashboard;
@@ -117,6 +118,9 @@ public sealed class SnapshotsView
     }
 
     public void Update(DashboardState state) { /* snapshot data is independent of the poll */ }
+
+    /// <summary>Focus the snapshots table so its keys work immediately on view entry.</summary>
+    public void FocusPrimary() => _table?.RequestFocus();
 
     /// <summary>'p' pins/unpins the selected snapshot when the table has focus.</summary>
     public bool TryHandleKey(ConsoleKeyInfo key)

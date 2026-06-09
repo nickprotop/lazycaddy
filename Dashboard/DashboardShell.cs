@@ -135,27 +135,27 @@ public sealed class DashboardShell
             .WithCompactThreshold(50)
             .AddHeader("Caddy", UIConstants.Accent, h =>
             {
-                // Each view's title carries its digit shortcut (1..9) in an aligned column, so the
-                // keybinding is discoverable in the nav itself — the same caption+shortcut idea the
-                // toolbars use. WithInitialData wraps each factory so the view shows the latest
-                // snapshot the instant it's first opened, rather than waiting for the next poll tick.
-                h.AddItem(NavTitle("Overview", 1), icon: "◈", subtitle: "Status at a glance",
+                // WithInitialData wraps each factory so the view shows the latest snapshot the
+                // instant it's first opened, rather than waiting for the next poll tick. The digit
+                // shortcut (1..9) matches each item's position; pressing it jumps here and focuses
+                // the view's primary control (see FocusPrimaryControl).
+                h.AddItem("Overview", icon: "◈", subtitle: "Status at a glance",
                     content: WithInitialData(_overview.Build, _overview.Update));
-                h.AddItem(NavTitle("Routes", 2), icon: "↦", subtitle: "Host → upstream",
+                h.AddItem("Routes", icon: "↦", subtitle: "Host → upstream",
                     content: WithInitialData(_routes.Build, _routes.Update));
-                h.AddItem(NavTitle("TLS / Certs", 3, iconW: 2), icon: "🔒", subtitle: "Certificate health",
+                h.AddItem("TLS / Certs", icon: "🔒", subtitle: "Certificate health",
                     content: WithInitialData(_certs.Build, _certs.Update));
-                h.AddItem(NavTitle("Upstreams", 4), icon: "⇡", subtitle: "Reachability probes",
+                h.AddItem("Upstreams", icon: "⇡", subtitle: "Reachability probes",
                     content: WithInitialData(_upstreams.Build, _upstreams.Update));
-                h.AddItem(NavTitle("Raw Config", 5, iconW: 2), icon: "{}", subtitle: "Running config JSON",
+                h.AddItem("Raw Config", icon: "{}", subtitle: "Running config JSON",
                     content: WithInitialData(_rawConfig.Build, _rawConfig.Update));
-                h.AddItem(NavTitle("Snapshots", 6), icon: "⟲", subtitle: "Config history",
+                h.AddItem("Snapshots", icon: "⟲", subtitle: "Config history",
                     content: WithInitialData(_snapshots.Build, _snapshots.Update));
-                h.AddItem(NavTitle("Topology", 7), icon: "⌗", subtitle: "Routing graph",
+                h.AddItem("Topology", icon: "⌗", subtitle: "Routing graph",
                     content: WithInitialData(_topology.Build, _topology.Update));
-                h.AddItem(NavTitle("Logs", 8, iconW: 2), icon: "📜", subtitle: "Live access log",
+                h.AddItem("Logs", icon: "📜", subtitle: "Live access log",
                     content: WithInitialData(_logs.Build, _logs.Update));
-                h.AddItem(NavTitle("Server", 9), icon: "⚙", subtitle: "Server & global settings",
+                h.AddItem("Server", icon: "⚙", subtitle: "Server & global settings",
                     content: WithInitialData(_server.Build, _server.Update));
             })
             .WithAlignment(HorizontalAlignment.Stretch)
@@ -163,18 +163,23 @@ public sealed class DashboardShell
             .Build();
     }
 
-    // Nav title with its digit shortcut aligned into a column, so the keybinding shows in the
-    // sidebar (like a button's caption+shortcut). The nav formatter renders "<icon> <text>" and
-    // pads/truncates to the pane width; pad every name to the longest name's width so the digits
-    // line up in a tidy column and none get truncated off the right edge. (Longest entry is
-    // "TLS / Certs" = 11; pad to that + a gap. Stays within the ~20-col text area after the icon.)
-    // iconW is the rendered width of the item's icon (emoji like 🔒/📜 and the 2-char {} are width 2,
-    // single symbols width 1). Subtracting it keeps the digit column aligned across mixed icon widths.
-    private const int NavNameWidth = 11;   // == longest view name; keeps the shortcut column aligned
-    private static string NavTitle(string name, int digit, int iconW = 1)
+    // After jumping to a view, focus its primary control so the user can act immediately
+    // (arrows/Enter/edit keys/scroll) without first pressing Tab to cross into the content. Each
+    // view focuses its own control ref (FindControl can't reach into the nav's content panel).
+    // Overview is read-only cards — nothing meaningful to focus, so it's omitted.
+    private void FocusPrimaryControl(int view)
     {
-        int pad = System.Math.Max(1, NavNameWidth - name.Length + 2 - iconW); // +2 base gap, less icon width
-        return name + new string(' ', pad) + digit;
+        switch (view)
+        {
+            case 2: _routes.FocusPrimary(); break;
+            case 3: _certs.FocusPrimary(); break;
+            case 4: _upstreams.FocusPrimary(); break;
+            case 5: _rawConfig.FocusPrimary(); break;
+            case 6: _snapshots.FocusPrimary(); break;
+            case 7: _topology.FocusPrimary(); break;
+            case 8: _logs.FocusPrimary(); break;
+            case 9: _server.FocusPrimary(); break;
+        }
     }
 
     /// <summary>Combine a view's Build factory with an immediate Update so it isn't
@@ -239,6 +244,7 @@ public sealed class DashboardShell
         if (_nav is not null && TryDigit(e.KeyInfo, out int view))
         {
             _nav.SelectedIndex = view; // header is index 0, first view is index 1 == digit 1
+            FocusPrimaryControl(view); // land on the view's primary control, ready to act
             e.Handled = true;
             return;
         }

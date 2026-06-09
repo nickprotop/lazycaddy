@@ -6,6 +6,7 @@
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
+using SharpConsoleUI.Extensions;
 using SharpConsoleUI.Layout;
 using LazyCaddy.Configuration;
 using LazyCaddy.Dashboard;
@@ -27,6 +28,9 @@ public sealed class CertsView
     private string? _renderedSignature;   // skip rebuild when unchanged (see Update)
 
     public CertsView(ConsoleWindowSystem ws, EditCoordinator editor) { _ws = ws; _editor = editor; }
+
+    /// <summary>Focus the certs table so its keys work immediately on view entry.</summary>
+    public void FocusPrimary() => _table?.RequestFocus();
 
     /// <summary>Handle a view-level edit shortcut. Returns true if consumed.
     /// Only acts when this view's table currently has focus.</summary>

@@ -12,6 +12,7 @@
 
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
+using SharpConsoleUI.Extensions;
 using SharpConsoleUI.Layout;
 using LazyCaddy.Configuration;
 using LazyCaddy.Dashboard;
@@ -109,6 +110,9 @@ public sealed class LogsView
     /// <summary>Called each poll (UI thread) like every view. The tail loop drives the live feed;
     /// here we just refresh the banner from the latest source/status.</summary>
     public void Update(DashboardState state) => UpdateBanner();
+
+    /// <summary>Focus the logs table so its keys (pause/scroll) work immediately on view entry.</summary>
+    public void FocusPrimary() => _table?.RequestFocus();
 
     /// <summary>Called by the shell's tail loop (marshalled to the UI thread) to apply newly
     /// tailed entries. No-op appending while paused (entries are still drained to bound memory).</summary>

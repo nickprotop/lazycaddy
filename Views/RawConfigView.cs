@@ -6,6 +6,7 @@
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
+using SharpConsoleUI.Extensions;
 using SharpConsoleUI.Layout;
 using LazyCaddy.Configuration;
 using LazyCaddy.Dashboard;
@@ -64,6 +65,9 @@ public sealed class RawConfigView
         // repopulates it (otherwise the unchanged-content guard leaves it blank).
         _lastContent = string.Empty;
     }
+
+    /// <summary>Focus the config editor so find/scroll/edit keys work immediately on view entry.</summary>
+    public void FocusPrimary() => _editor?.RequestFocus();
 
     /// <summary>Edit-mode hotkeys, active only when the config editor has focus.
     /// i: enter edit mode · Ctrl+S: apply via /load · Esc: cancel edit. Returns true if consumed.</summary>

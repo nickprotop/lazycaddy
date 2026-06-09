@@ -9,6 +9,7 @@
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
+using SharpConsoleUI.Extensions;
 using SharpConsoleUI.Layout;
 using LazyCaddy.Configuration;
 using LazyCaddy.Dashboard;
@@ -22,6 +23,7 @@ public sealed class TopologyView
     private const int Pad = 2; // breathing room around the graph in the canvas buffer
 
     private CanvasControl? _canvas;
+    private ScrollablePanelControl? _scroller;   // focused on view entry so arrows pan the graph
     private IReadOnlyList<PlacedNode> _placed = System.Array.Empty<PlacedNode>();
     private IReadOnlyList<TopoEdge> _edges = System.Array.Empty<TopoEdge>();
 
@@ -63,8 +65,12 @@ public sealed class TopologyView
             .AddControl(_canvas)
             .Build();
 
+        _scroller = scroller;
         panel.AddControl(scroller);
     }
+
+    /// <summary>Focus the scroller so arrows / PgUp·PgDn / Home·End pan the graph on view entry.</summary>
+    public void FocusPrimary() => _scroller?.RequestFocus();
 
     public void Update(DashboardState state)
     {
