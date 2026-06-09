@@ -19,6 +19,15 @@ public enum NodeHealth { Unknown, Up, Down, Warn }
 public sealed record TopoNode(string Id, NodeKind Kind, string Label, NodeHealth Health)
 {
     public Route? Route { get; init; }     // set on Host nodes, for edit/detail
+    // The route this node belongs to (0-based), so the layout can give each route its own
+    // horizontal swim-lane and chains never cross between routes. Shared/deduped upstream
+    // nodes belong to no single route → Lane = -1 (placed in the final column, stacked).
+    public int Lane { get; init; } = -1;
+    // The node's position in its route's chain, used as the layout column: Host = 0, then each
+    // successive handler (every middleware, then the terminal/proxy) increments. This gives each
+    // middleware in a chain its own column instead of colliding in a shared "middleware" column.
+    // Upstreams sit one column past their reverse_proxy.
+    public int Column { get; init; }
 }
 
 public sealed record TopoEdge(string FromId, string ToId);
@@ -51,16 +60,19 @@ public sealed class TopologyGraph
         {
             var hostId = $"host:{r}";
             nodes.Add(new TopoNode(hostId, NodeKind.Host, route.HostOrMatch,
-                route.Status == "active" ? NodeHealth.Up : NodeHealth.Warn) { Route = route });
+                route.Status == "active" ? NodeHealth.Up : NodeHealth.Warn) { Route = route, Lane = r, Column = 0 });
 
             // Walk the route's real handler chain. Each middleware becomes a node chained
             // in order; a leaf handler terminates the chain (reverse_proxy → upstreams, or
             // a Terminal node for file_server/static_response/etc.). Subroute containers are
             // skipped — ParseHandlers already recurses into them and flattens their handlers.
+            // `col` is the chain position (Host = 0); each node takes the next column so a chain
+            // of N handlers spreads across N columns rather than colliding.
             var handlers = ParseChainHandlers(route);
 
             var prevId = hostId; // tail of the chain so far
             bool sawTerminal = false;
+            int col = 1;
             int h = 0;
             foreach (var handler in handlers)
             {
@@ -70,27 +82,28 @@ public sealed class TopologyGraph
                 if (kind == HandlerKind.Middleware)
                 {
                     var midId = $"mw:{r}:{h}";
-                    nodes.Add(new TopoNode(midId, NodeKind.Middleware, handler.Type, NodeHealth.Unknown));
+                    nodes.Add(new TopoNode(midId, NodeKind.Middleware, handler.Type, NodeHealth.Unknown) { Lane = r, Column = col });
                     edges.Add(new TopoEdge(prevId, midId));
                     prevId = midId;
                 }
                 else if (handler.Type == "reverse_proxy")
                 {
                     var rpId = $"rp:{r}:{h}";
-                    nodes.Add(new TopoNode(rpId, NodeKind.ReverseProxy, "reverse_proxy", NodeHealth.Unknown));
+                    nodes.Add(new TopoNode(rpId, NodeKind.ReverseProxy, "reverse_proxy", NodeHealth.Unknown) { Lane = r, Column = col });
                     edges.Add(new TopoEdge(prevId, rpId));
-                    AddUpstreams(rpId, route, upstreamNodeIds, upstreamHealth, nodes, edges);
+                    AddUpstreams(rpId, route, col + 1, upstreamNodeIds, upstreamHealth, nodes, edges);
                     prevId = rpId;
                     sawTerminal = true;
                 }
                 else // Leaf (non-proxy) or Unknown terminal handler
                 {
                     var termId = $"term:{r}:{h}";
-                    nodes.Add(new TopoNode(termId, NodeKind.Terminal, handler.Type, NodeHealth.Unknown));
+                    nodes.Add(new TopoNode(termId, NodeKind.Terminal, handler.Type, NodeHealth.Unknown) { Lane = r, Column = col });
                     edges.Add(new TopoEdge(prevId, termId));
                     prevId = termId;
                     sawTerminal = true;
                 }
+                col++;
                 h++;
             }
 
@@ -100,9 +113,9 @@ public sealed class TopologyGraph
             if (!sawTerminal && route.Upstream.Length > 0)
             {
                 var rpId = $"rp:{r}:fallback";
-                nodes.Add(new TopoNode(rpId, NodeKind.ReverseProxy, "reverse_proxy", NodeHealth.Unknown));
+                nodes.Add(new TopoNode(rpId, NodeKind.ReverseProxy, "reverse_proxy", NodeHealth.Unknown) { Lane = r, Column = col });
                 edges.Add(new TopoEdge(prevId, rpId));
-                AddUpstreams(rpId, route, upstreamNodeIds, upstreamHealth, nodes, edges);
+                AddUpstreams(rpId, route, col + 1, upstreamNodeIds, upstreamHealth, nodes, edges);
             }
 
             r++;
@@ -119,9 +132,11 @@ public sealed class TopologyGraph
         catch { return Array.Empty<HandlerDescriptor>(); }
     }
 
-    // Attach the route's upstream addresses (deduped by dial) to a reverse_proxy node.
+    // Attach the route's upstream addresses (deduped by dial) to a reverse_proxy node, placing
+    // each upstream in `column` (one past its proxy). A shared upstream referenced by several
+    // proxies takes the rightmost column among them so it sits clear of every proxy.
     private static void AddUpstreams(
-        string rpId, Route route,
+        string rpId, Route route, int column,
         Dictionary<string, string> upstreamNodeIds,
         Dictionary<string, NodeHealth> upstreamHealth,
         List<TopoNode> nodes, List<TopoEdge> edges)
@@ -133,7 +148,14 @@ public sealed class TopologyGraph
                 upId = $"up:{dial}";
                 upstreamNodeIds[dial] = upId;
                 var health = upstreamHealth.TryGetValue(dial, out var hv) ? hv : NodeHealth.Unknown;
-                nodes.Add(new TopoNode(upId, NodeKind.Upstream, dial, health));
+                nodes.Add(new TopoNode(upId, NodeKind.Upstream, dial, health) { Column = column });
+            }
+            else
+            {
+                // Already created by an earlier proxy — keep it in the rightmost column needed.
+                int idx = nodes.FindIndex(n => n.Id == upId);
+                if (idx >= 0 && column > nodes[idx].Column)
+                    nodes[idx] = nodes[idx] with { Column = column };
             }
             edges.Add(new TopoEdge(rpId, upId));
         }
