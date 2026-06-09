@@ -51,6 +51,10 @@ public sealed record LazyCaddyConfig
     /// when LazyCaddy runs on the same host as Caddy.</summary>
     public string CaddyDataDir { get; init; } = LazyCaddy.Services.CertStore.DefaultDataDir();
 
+    /// <summary>Optional explicit access-log file path (overrides config auto-discovery).
+    /// Null → discover from the running config (only works for a local Caddy with a file writer).</summary>
+    public string? AccessLogPath { get; init; } = null;
+
     /// <summary>
     /// Snapshot directory scoped to <see cref="AdminApiUrl"/> so snapshots from different
     /// Caddy instances never mix (a restore must not POST one instance's config into another).

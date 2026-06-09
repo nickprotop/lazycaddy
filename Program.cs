@@ -21,13 +21,14 @@ internal static class Program
         // Support the PTY shim used by SharpConsoleUI's screenshot/testing harness.
         if (PtyShim.RunIfShim(args)) return 127;
 
-        if (!TryParseArgs(args, out var adminUrl, out var certDir, out var exitCode))
+        if (!TryParseArgs(args, out var adminUrl, out var certDir, out var accessLog, out var exitCode))
             return exitCode;
 
         try
         {
             var config = LazyCaddyConfig.Default with { AdminApiUrl = adminUrl };
             if (certDir is not null) config = config with { CaddyDataDir = certDir };
+            if (accessLog is not null) config = config with { AccessLogPath = accessLog };
 
             // Flip simulateDisconnected via an env var to exercise the red status path.
             var simulateDown = Environment.GetEnvironmentVariable("LAZYCADDY_SIMULATE_DOWN") == "1";
@@ -76,10 +77,11 @@ internal static class Program
     /// Returns false when the app should exit without launching (help or bad input),
     /// with <paramref name="exitCode"/> set accordingly.
     /// </summary>
-    private static bool TryParseArgs(string[] args, out string adminUrl, out string? certDir, out int exitCode)
+    private static bool TryParseArgs(string[] args, out string adminUrl, out string? certDir, out string? accessLog, out int exitCode)
     {
         adminUrl = LazyCaddyConfig.Default.AdminApiUrl;
         certDir = null;
+        accessLog = null;
         exitCode = 0;
 
         string? url = null;
@@ -111,6 +113,16 @@ internal static class Program
                         return false;
                     }
                     certDir = args[++i];
+                    break;
+
+                case "--access-log":
+                    if (i + 1 >= args.Length)
+                    {
+                        Console.Error.WriteLine("lazycaddy: --access-log requires a value.");
+                        exitCode = 2;
+                        return false;
+                    }
+                    accessLog = args[++i];
                     break;
 
                 default:
@@ -164,6 +176,9 @@ internal static class Program
               --cert-dir <DIR>   Caddy data dir for reading real cert expiry from disk
                                  (default: $XDG_DATA_HOME/caddy or ~/.local/share/caddy;
                                  only useful when run on the same host as Caddy)
+              --access-log <PATH>  Access-log file to tail in the Logs view
+                                   (default: auto-discovered from the running config;
+                                   only works for a local Caddy with a file log writer)
               -h, --help         Show this help and exit
 
             Examples:
@@ -171,6 +186,7 @@ internal static class Program
               lazycaddy http://localhost:2019
               lazycaddy --url https://caddy.internal:2019
               lazycaddy --cert-dir /var/lib/caddy/.local/share/caddy
+              lazycaddy --access-log /var/log/caddy/access.log
             """);
     }
 }

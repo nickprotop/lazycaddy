@@ -36,6 +36,8 @@ public sealed class DashboardShell
     private readonly TopologyView _topology = new();
     private readonly MetricsView _metrics = new();
     private readonly AdaptView _adapt;
+    private readonly LogState _logState = new();
+    private readonly LogsView _logs;
     private readonly ServerView _server;
 
     private Window? _window;
@@ -47,6 +49,12 @@ public sealed class DashboardShell
 
     // Lets the R key wake the poll loop immediately instead of waiting for the tick.
     private readonly SemaphoreSlim _refreshSignal = new(0, 1);
+
+    // The dedicated access-log tail loop (separate from the 5s poll loop).
+    private readonly CancellationTokenSource _tailCts = new();
+    private LogTailer? _tailer;
+    private LogSource _tailSource = LogSource.NotConfigured;
+    private const int TailIntervalMs = 1000;
 
     // Spinner frames for the "polling in flight" indicator in the status bar.
     private static readonly string[] SpinnerFrames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
@@ -66,6 +74,7 @@ public sealed class DashboardShell
         _rawConfig = new RawConfigView(ws, editor);
         _snapshots = new SnapshotsView(ws, editor);
         _adapt = new AdaptView(ws, editor);
+        _logs = new LogsView(_logState);
         _server = new ServerView(ws, editor, RequestRefresh);
     }
 
@@ -98,6 +107,7 @@ public sealed class DashboardShell
             .BuildAndShow();
 
         _window = window;
+        _ = Task.Run(TailLoopAsync);
 
         // Reflow the Overview cards live on terminal resize. ScreenResized may fire
         // off the UI thread, so marshal the relayout back onto it (same event
@@ -148,6 +158,8 @@ public sealed class DashboardShell
                     content: WithInitialData(_metrics.Build, _metrics.Update));
                 h.AddItem("Caddyfile", icon: "⇄", subtitle: "Adapt to JSON",
                     content: WithInitialData(_adapt.Build, _adapt.Update));
+                h.AddItem("Logs", icon: "📜", subtitle: "Live access log",
+                    content: WithInitialData(_logs.Build, _logs.Update));
                 h.AddItem("Server", icon: "⚙", subtitle: "Server & global settings",
                     content: WithInitialData(_server.Build, _server.Update));
             })
@@ -197,14 +209,22 @@ public sealed class DashboardShell
         }
     }
 
-    private void Quit() => _ws.Shutdown(0);
+    private void Quit()
+    {
+        _tailCts.Cancel();
+        _ws.Shutdown(0);
+    }
 
     // Number keys 1..8 jump to the matching view. The nav item list has a single
     // Header at index 0 ("Caddy"), then the 8 views at indices 1..8 in order:
-    // 1 Overview · 2 Routes · 3 TLS/Certs · 4 Upstreams · 5 Raw Config · 6 Snapshots · 7 Topology · 8 Server.
-    // So SelectedIndex == digit (header offset of 1). This handler only fires for the
-    // main window; modal prompts capture their own keys, so digits aren't hijacked.
-    private const int ViewCount = 10;
+    // 1 Overview · 2 Routes · 3 TLS/Certs · 4 Upstreams · 5 Raw Config · 6 Snapshots · 7 Topology ·
+    // 8 Metrics · 9 Caddyfile · 10 Logs · 11 Server. Digit keys only reach 1–9; views 10/11 are
+    // reachable via the sidebar. So SelectedIndex == digit (header offset of 1). This handler only
+    // fires for the main window; modal prompts capture their own keys, so digits aren't hijacked.
+    private const int ViewCount = 11;
+
+    // 1-based nav index of the Logs entry (header is index 0; Overview=1 ... Caddyfile=9, Logs=10).
+    private const int LogsNavIndex = 10;
 
     private void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
@@ -220,6 +240,7 @@ public sealed class DashboardShell
         if (_snapshots.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_rawConfig.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_adapt.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
+        if (_logs.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_server.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
 
         switch (e.KeyInfo.Key)
@@ -243,7 +264,7 @@ public sealed class DashboardShell
         }
     }
 
-    /// <summary>Map D1..D8 / NumPad1..NumPad8 to a 1-based view index. False otherwise.</summary>
+    /// <summary>Map D1..D9 / NumPad1..NumPad9 to a 1-based view index. False otherwise.</summary>
     private static bool TryDigit(ConsoleKeyInfo key, out int view)
     {
         view = key.Key switch
@@ -318,6 +339,66 @@ public sealed class DashboardShell
         }
     }
 
+    // Dedicated ~1s loop that tails the access-log file while the Logs view is active,
+    // separate from the 5s poll loop so the feed feels live. Off-UI-thread; the only UI
+    // touch is marshalled via EnqueueOnUIThread. Cancelled on Quit.
+    private async Task TailLoopAsync()
+    {
+        var ct = _tailCts.Token;
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                if (_logState.IsActive)
+                {
+                    EnsureTailer();
+                    if (_tailer is not null)
+                    {
+                        var r = _tailer.ReadNewLines();
+                        _logState.LastTail = r.Kind;
+                        if (r.Kind == TailKind.Lines && r.Lines.Count > 0)
+                        {
+                            var parsed = r.Lines
+                                .Select(AccessLogParser.Parse)
+                                .Where(e => e is not null)
+                                .Select(e => e!)
+                                .ToList();
+                            if (parsed.Count > 0) _logState.Append(parsed);
+                        }
+                    }
+                    _ws.EnqueueOnUIThread(_logs.ApplyNew, "tail:apply");
+                }
+            }
+            catch { /* never let the tail loop die; next tick retries */ }
+
+            try { await Task.Delay(TailIntervalMs, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { break; }
+        }
+    }
+
+    // Resolve the log source from the latest snapshot's config; (re)create the tailer when the
+    // resolved path changes. Runs on the tail thread; reads the thread-safe DashboardState snapshot.
+    private void EnsureTailer()
+    {
+        var snap = _state.Snapshot;
+        var configJson = snap?.RawConfigJson ?? "";
+        var source = AccessLogLocator.Resolve(configJson, _config.AccessLogPath,
+            AccessLogLocator.UrlIsLocal(_config.AdminApiUrl));
+        _logState.Source = source;
+
+        if (source.Kind != LogSourceKind.File)
+        {
+            _tailer = null;
+            _tailSource = source;
+            return;
+        }
+        if (_tailSource.Kind != LogSourceKind.File || _tailSource.Path != source.Path)
+        {
+            _tailer = new LogTailer(source.Path!);
+            _tailSource = source;
+        }
+    }
+
     private async Task<CaddySnapshot> FetchSnapshotAsync(CancellationToken ct)
     {
         // All awaited off-thread; no UI access here.
@@ -340,6 +421,8 @@ public sealed class DashboardShell
 
     private void ApplyAll()
     {
+        // Gate the Logs tail loop to when the Logs view is actually shown.
+        _logState.IsActive = _nav is not null && _nav.SelectedIndex == LogsNavIndex;
         ApplyStatusBar(spinner: null);
         _overview.Update(_state);
         _routes.Update(_state);
@@ -350,6 +433,7 @@ public sealed class DashboardShell
         _topology.Update(_state);
         _metrics.Update(_state);
         _adapt.Update(_state);
+        _logs.Update(_state);
         _server.Update(_state);
     }
 
