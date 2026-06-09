@@ -1,11 +1,11 @@
 // -----------------------------------------------------------------------
-// LazyCaddy - Caddyfile → JSON: paste/edit a Caddyfile, adapt it to JSON via
+// LazyCaddy - Caddyfile → JSON modal: paste/edit a Caddyfile, adapt it to JSON via
 // Caddy's /adapt endpoint (no change to the running config), preview the result,
 // and optionally load it (POST /load, snapshotted first).
 //
 // /adapt is a pure converter — adapting never touches the running server. Only
 // "Load adapted config" mutates, and it goes through EditCoordinator (snapshot →
-// /load) with a confirmation.
+// /load) with a confirmation. Launched from the Raw Config view.
 // -----------------------------------------------------------------------
 
 using SharpConsoleUI;
@@ -13,16 +13,12 @@ using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
 using SharpConsoleUI.Layout;
 using LazyCaddy.Configuration;
-using LazyCaddy.Dashboard;
 using LazyCaddy.Services;
-using LazyCaddy.UI;
-using LazyCaddy.UI.Modals;
 
-namespace LazyCaddy.Views;
+namespace LazyCaddy.UI.Modals;
 
-public sealed class AdaptView
+public sealed class AdaptCaddyfileModal : ModalBase<bool>
 {
-    private readonly ConsoleWindowSystem _ws;
     private readonly EditCoordinator _editor;
 
     private MultilineEditControl? _input;
@@ -33,35 +29,34 @@ public sealed class AdaptView
     // The most recent successful adaptation's JSON, eligible to load. Null until a clean adapt.
     private string? _adaptedJson;
 
-    public AdaptView(ConsoleWindowSystem ws, EditCoordinator editor) { _ws = ws; _editor = editor; }
+    // Whether a Load succeeded — surfaced as the modal result so the caller can refresh.
+    private bool _loaded;
 
-    public bool TryHandleKey(ConsoleKeyInfo key)
-    {
-        // Ctrl+Enter adapts (works while typing in the input). Other keys fall through to the editor.
-        if (key.Key == ConsoleKey.Enter && (key.Modifiers & ConsoleModifiers.Control) != 0
-            && (_input?.HasFocus ?? false))
-        {
-            _ = AdaptAsync();
-            return true;
-        }
-        return false;
-    }
+    private AdaptCaddyfileModal(EditCoordinator editor) { _editor = editor; }
 
-    public void Build(ScrollablePanelControl panel)
+    public static Task<bool> ShowAsync(ConsoleWindowSystem ws, EditCoordinator editor, Window? parent = null)
+        => ((ModalBase<bool>)new AdaptCaddyfileModal(editor)).ShowAsync(ws, parent);
+
+    protected override string GetTitle() => " Caddyfile → JSON ";
+    protected override (int width, int height) GetSize() => (110, 36);
+    protected override bool GetDefaultResult() => false;
+
+    protected override void BuildContent()
     {
         var accent = UIConstants.Accent.ToMarkup();
         var muted = UIConstants.MutedText.ToMarkup();
 
-        panel.AddControl(Controls.Markup()
+        Modal.AddControl(Controls.Markup()
             .AddLine($"[bold {accent}]Caddyfile → JSON[/]")
             .AddLine($"[{muted}]Edit a Caddyfile, adapt it to JSON (Ctrl+Enter). Adapting never changes the running config.[/]")
-            .AddEmptyLine()
+            .WithMargin(2, 1, 2, 0)
             .Build());
 
+        // Top toolbar: Adapt always; Load shown only after a successful adapt (RebuildToolbar).
         _toolbar = ViewToolbar.Create("adaptToolbar");
-        panel.AddControl(_toolbar);
+        Modal.AddControl(_toolbar);
 
-        panel.AddControl(Controls.RuleBuilder().WithTitle("Caddyfile").WithColor(UIConstants.MutedText).Build());
+        Modal.AddControl(Controls.RuleBuilder().WithTitle("Caddyfile").WithColor(UIConstants.MutedText).Build());
         _input = Controls.MultilineEdit(SampleCaddyfile)
             .WithLineNumbers(true)
             .NoWrap()
@@ -70,9 +65,9 @@ public sealed class AdaptView
             .WithName("adaptInput")
             .Build();
         _input.Height = 10;
-        panel.AddControl(_input);
+        Modal.AddControl(_input);
 
-        panel.AddControl(Controls.RuleBuilder().WithTitle("Adapted JSON").WithColor(UIConstants.MutedText).Build());
+        Modal.AddControl(Controls.RuleBuilder().WithTitle("Adapted JSON").WithColor(UIConstants.MutedText).Build());
         _output = Controls.MultilineEdit(string.Empty)
             .AsReadOnly(true)
             .WithLineNumbers(true)
@@ -83,10 +78,15 @@ public sealed class AdaptView
             .WithHorizontalScrollbar(ScrollbarVisibility.Auto)
             .WithName("adaptOutput")
             .Build();
-        panel.AddControl(_output);
+        Modal.AddControl(_output);
 
         _status = Controls.Markup().WithMargin(2, 0, 2, 0).StickyBottom().Build();
-        panel.AddControl(_status);
+        Modal.AddControl(_status);
+
+        // Sticky bottom: Close. (Adapt/Load live on the top toolbar.)
+        Modal.AddControl(Controls.Toolbar()
+            .AddButton(UIConstants.ActionButton("Close", "Esc", () => CloseWithResult(_loaded)))
+            .WithSpacing(2).WithMargin(2, 0, 2, 0).WithAboveLine().StickyBottom().Build());
 
         RebuildToolbar();
     }
@@ -96,11 +96,23 @@ public sealed class AdaptView
         if (_toolbar is null) return;
         var actions = new List<ToolbarAction?>
         {
-            new(ViewToolbar.Caption("⇄", "Adapt", "Ctrl+Enter"), () => _ = AdaptAsync()),
+            new(ViewToolbar.Caption("⇄", "Adapt", "Ctrl+Enter"), () => RunGuarded(AdaptAsync, ShowError)),
         };
         if (_adaptedJson is not null)
-            actions.Add(new(ViewToolbar.Caption("⬆", "Load adapted config", "l"), () => _ = LoadAsync()));
+            actions.Add(new(ViewToolbar.Caption("⬆", "Load adapted config", "l"), () => RunGuarded(LoadAsync, ShowError)));
         ViewToolbar.Rebuild(_toolbar, actions);
+    }
+
+    protected override void OnKeyPressed(object? sender, KeyPressedEventArgs e)
+    {
+        var ctrl = (e.KeyInfo.Modifiers & ConsoleModifiers.Control) != 0;
+        if (e.KeyInfo.Key == ConsoleKey.Enter && ctrl) { e.Handled = true; RunGuarded(AdaptAsync, ShowError); return; }
+        if (e.KeyInfo.Key == ConsoleKey.Escape) { e.Handled = true; CloseWithResult(_loaded); return; }
+        // 'l' loads — but only when not typing in the editable input.
+        if (e.KeyInfo.Key == ConsoleKey.L && !ctrl && !(_input?.HasFocus ?? false) && _adaptedJson is not null)
+        {
+            e.Handled = true; RunGuarded(LoadAsync, ShowError); return;
+        }
     }
 
     private async Task AdaptAsync()
@@ -146,19 +158,17 @@ public sealed class AdaptView
         string current;
         try { current = await _editor.GetRawConfigAsync(); }
         catch { current = "{}"; }
-        if (!await DiffConfirmDialog.ShowAsync(_ws, "Load adapted config (replaces entire config)", current, _adaptedJson))
+        if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Load adapted config (replaces entire config)", current, _adaptedJson, Modal))
             return;
 
         var res = await _editor.LoadFullConfigAsync(_adaptedJson, "load adapted Caddyfile");
         if (res.Success)
+        {
+            _loaded = true;
             SetStatus($"[{UIConstants.Good.ToMarkup()}]✓ Loaded adapted config (snapshot taken first).[/]");
+        }
         else
             ShowError(res.FriendlyError);
-    }
-
-    public void Update(DashboardState state)
-    {
-        // Stateless view: nothing to refresh per poll. The user drives it.
     }
 
     private void ShowError(string m) => SetStatus($"[{UIConstants.Bad.ToMarkup()}]{Escape(m)}[/]");

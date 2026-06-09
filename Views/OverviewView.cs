@@ -29,6 +29,11 @@ public sealed class OverviewView
     private PanelControl? _upstreamsCard;
     private PanelControl? _trafficCard;
     private SparklineControl? _sparkline;
+    // Metrics detail (folded in from the former Metrics view): status-code bars,
+    // latency percentiles, busiest-handlers table — shown below the sparkline.
+    private MarkupControl? _statusBars;
+    private MarkupControl? _latency;
+    private TableControl? _topTable;
 
     // Resize/relayout state: the panel we live in, the cards, the row-grid controls
     // currently in the panel, the index they start at, and the last per-row count.
@@ -80,6 +85,24 @@ public sealed class OverviewView
                 .Build();
             panel.AddControl(_sparkline);
         }
+
+        // ── Metrics detail (folded in from the former Metrics view) ──
+        panel.AddControl(Controls.RuleBuilder().WithTitle("Status codes").WithColor(UIConstants.MutedText).Build());
+        _statusBars = Controls.Markup().WithMargin(2, 0, 2, 0).Build();
+        panel.AddControl(_statusBars);
+
+        panel.AddControl(Controls.RuleBuilder().WithTitle("Latency").WithColor(UIConstants.MutedText).Build());
+        _latency = Controls.Markup().WithMargin(2, 0, 2, 0).Build();
+        panel.AddControl(_latency);
+
+        panel.AddControl(Controls.RuleBuilder().WithTitle("Busiest handlers").WithColor(UIConstants.MutedText).Build());
+        _topTable = Controls.Table()
+            .AddColumn("Handler", TextJustification.Left, 24)
+            .AddColumn("Requests", TextJustification.Right, 14)
+            .AddColumn("Share", TextJustification.Left)
+            .Rounded().WithBorderColor(UIConstants.MutedText)
+            .WithName("overviewTopTable").Build();
+        panel.AddControl(_topTable);
     }
 
     /// <summary>
@@ -229,6 +252,66 @@ public sealed class OverviewView
                 _sparkline.Visible = false;
             }
         }
+
+        UpdateMetricsDetail(snap.Metrics, muted);
+    }
+
+    // Status-code bars, latency percentiles, and busiest-handlers table (folded in from the
+    // former Metrics view). Degrades gracefully when /metrics is off or no traffic has flowed.
+    private void UpdateMetricsDetail(Models.MetricsSnapshot m, string muted)
+    {
+        if (_statusBars is null || _latency is null || _topTable is null) return;
+        var sc = m.StatusClasses;
+        if (!m.Available || sc.Total <= 0)
+        {
+            var hint = !m.Available ? "/metrics not enabled" : "no requests recorded yet";
+            _statusBars.SetContent(new List<string> { $"[{muted}]{hint}[/]" });
+            _latency.SetContent(new List<string> { $"[{muted}]—[/]" });
+            _topTable.ClearRows();
+            return;
+        }
+
+        _statusBars.SetContent(new List<string>
+        {
+            Bar("2xx", sc.C2xx, sc.Total, UIConstants.Good),
+            Bar("3xx", sc.C3xx, sc.Total, UIConstants.AccentBlue),
+            Bar("4xx", sc.C4xx, sc.Total, UIConstants.Warn),
+            Bar("5xx", sc.C5xx, sc.Total, UIConstants.Bad),
+        });
+
+        _latency.SetContent(new List<string>
+        {
+            m.Latency.Available
+                ? $"[{muted}]p50[/] [bold]{FormatMs(m.Latency.P50)}[/]    [{muted}]p95[/] [bold]{FormatMs(m.Latency.P95)}[/]    [{muted}]p99[/] [bold]{FormatMs(m.Latency.P99)}[/]"
+                : $"[{muted}]latency histogram unavailable[/]",
+        });
+
+        _topTable.ClearRows();
+        var handlerTotal = m.TopHandlers.Sum(h => h.Count);
+        foreach (var h in m.TopHandlers)
+        {
+            var share = handlerTotal > 0 ? 100.0 * h.Count / handlerTotal : 0;
+            _topTable.AddRow(new TableRow(Escape(h.Label), $"{h.Count:0}", MiniBar(share)));
+        }
+    }
+
+    private const int BarWidth = 24;
+    private static string Bar(string label, double value, double total, SharpConsoleUI.Color color)
+    {
+        var pct = total > 0 ? value / total : 0;
+        int filled = Math.Clamp((int)Math.Round(pct * BarWidth), 0, BarWidth);
+        var c = color.ToMarkup();
+        var muted = UIConstants.MutedText.ToMarkup();
+        var bar = $"[{c}]{new string('█', filled)}[/][{muted}]{new string('░', BarWidth - filled)}[/]";
+        return $"[{muted}]{label}[/]  {bar}  [bold]{pct * 100:0}%[/] [{muted}]({value:0})[/]";
+    }
+
+    private static string MiniBar(double sharePct)
+    {
+        int filled = Math.Clamp((int)Math.Round(sharePct / 100.0 * 16), 0, 16);
+        var c = UIConstants.AccentBlue.ToMarkup();
+        var muted = UIConstants.MutedText.ToMarkup();
+        return $"[{c}]{new string('█', filled)}[/][{muted}]{new string('░', 16 - filled)}[/] {sharePct:0}%";
     }
 
     // The Traffic card: current rate, in-flight, p95 latency, and a 2xx/4xx/5xx split.

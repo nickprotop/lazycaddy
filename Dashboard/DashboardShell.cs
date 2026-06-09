@@ -34,8 +34,6 @@ public sealed class DashboardShell
     private readonly RawConfigView _rawConfig;
     private readonly SnapshotsView _snapshots;
     private readonly TopologyView _topology = new();
-    private readonly MetricsView _metrics = new();
-    private readonly AdaptView _adapt;
     private readonly LogState _logState = new();
     private readonly LogsView _logs;
     private readonly ServerView _server;
@@ -73,7 +71,6 @@ public sealed class DashboardShell
         _upstreams = new UpstreamsView();
         _rawConfig = new RawConfigView(ws, editor);
         _snapshots = new SnapshotsView(ws, editor);
-        _adapt = new AdaptView(ws, editor);
         _logs = new LogsView(_logState);
         _server = new ServerView(ws, editor, RequestRefresh);
     }
@@ -154,10 +151,6 @@ public sealed class DashboardShell
                     content: WithInitialData(_snapshots.Build, _snapshots.Update));
                 h.AddItem("Topology", icon: "⌗", subtitle: "Routing graph",
                     content: WithInitialData(_topology.Build, _topology.Update));
-                h.AddItem("Metrics", icon: "📈", subtitle: "Traffic & latency",
-                    content: WithInitialData(_metrics.Build, _metrics.Update));
-                h.AddItem("Caddyfile", icon: "⇄", subtitle: "Adapt to JSON",
-                    content: WithInitialData(_adapt.Build, _adapt.Update));
                 h.AddItem("Logs", icon: "📜", subtitle: "Live access log",
                     content: WithInitialData(_logs.Build, _logs.Update));
                 h.AddItem("Server", icon: "⚙", subtitle: "Server & global settings",
@@ -215,16 +208,15 @@ public sealed class DashboardShell
         _ws.Shutdown(0);
     }
 
-    // Number keys 1..8 jump to the matching view. The nav item list has a single
-    // Header at index 0 ("Caddy"), then the 8 views at indices 1..8 in order:
+    // Number keys 1..9 jump to the matching view. The nav item list has a single
+    // Header at index 0 ("Caddy"), then the 9 views at indices 1..9 in order:
     // 1 Overview · 2 Routes · 3 TLS/Certs · 4 Upstreams · 5 Raw Config · 6 Snapshots · 7 Topology ·
-    // 8 Metrics · 9 Caddyfile · 10 Logs · 11 Server. Digit keys only reach 1–9; views 10/11 are
-    // reachable via the sidebar. So SelectedIndex == digit (header offset of 1). This handler only
+    // 8 Logs · 9 Server. So SelectedIndex == digit (header offset of 1). This handler only
     // fires for the main window; modal prompts capture their own keys, so digits aren't hijacked.
-    private const int ViewCount = 11;
+    private const int ViewCount = 9;
 
-    // 1-based nav index of the Logs entry (header is index 0; Overview=1 ... Caddyfile=9, Logs=10).
-    private const int LogsNavIndex = 10;
+    // 1-based nav index of the Logs entry (header is index 0; Overview=1 ... Topology=7, Logs=8).
+    private const int LogsNavIndex = 8;
 
     private void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
@@ -239,7 +231,6 @@ public sealed class DashboardShell
         if (_certs.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_snapshots.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_rawConfig.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
-        if (_adapt.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_logs.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_server.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
 
@@ -431,8 +422,6 @@ public sealed class DashboardShell
         _rawConfig.Update(_state);
         _snapshots.Update(_state);
         _topology.Update(_state);
-        _metrics.Update(_state);
-        _adapt.Update(_state);
         _logs.Update(_state);
         _server.Update(_state);
     }

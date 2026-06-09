@@ -99,6 +99,13 @@ public sealed class RawConfigView
             return true;
         }
 
+        // Adapt a Caddyfile to JSON (read-only mode only; the editable buffer owns 'a' otherwise).
+        if (key.Key == ConsoleKey.A && _editor.ReadOnly)
+        {
+            OpenAdapt();
+            return true;
+        }
+
         return false;
     }
 
@@ -109,6 +116,8 @@ public sealed class RawConfigView
         if (_editor is null) return;
         _ = FindDialog.ShowAsync(_ws, _editor);
     }
+
+    private void OpenAdapt() => _ = AdaptCaddyfileModal.ShowAsync(_ws, _coordinator);
 
     private void EnterEdit()
     {
@@ -142,6 +151,7 @@ public sealed class RawConfigView
             new(ViewToolbar.Caption("✎", "Edit", "i"), EnterEdit),
             new(ViewToolbar.Caption("✔", "Apply", "^S"), ApplyEdit),
             new(ViewToolbar.Caption("↩", "Cancel", "Esc"), CancelEdit),
+            new(ViewToolbar.Caption("⇄", "Adapt Caddyfile", "a"), OpenAdapt),
         });
     }
 
