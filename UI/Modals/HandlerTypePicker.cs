@@ -26,7 +26,7 @@ public sealed class HandlerTypePicker : ModalBase<string?>
         var muted = UIConstants.MutedText.ToMarkup();
         Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Choose a handler type to append to this route.[/]").WithMargin(2, 1, 2, 0).Build());
         _type = Controls.Dropdown("Handler:  ")
-            .AddItems(NewRouteSkeleton.OfferedTypes.Select(t => $"{t.Icon} {t.DisplayName}").ToArray()).Build();
+            .AddItems(NewRouteSkeleton.PickerTypes.Select(t => $"{t.Icon} {t.DisplayName}").ToArray()).Build();
         Modal.AddControl(_type);
         _error = Controls.Markup().WithMargin(2, 1, 2, 0).Build(); Modal.AddControl(_error);
         Modal.AddControl(Controls.Markup().AddLine($"[{muted}]Enter: add   Esc: cancel[/]").WithMargin(2, 0, 2, 0).StickyBottom().Build());
@@ -39,9 +39,9 @@ public sealed class HandlerTypePicker : ModalBase<string?>
         {
             e.Handled = true;
             var idx = _type?.SelectedIndex ?? -1;
-            if (idx < 0 || idx >= NewRouteSkeleton.OfferedTypes.Count)
+            if (idx < 0 || idx >= NewRouteSkeleton.PickerTypes.Count)
             { _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]Pick a type.[/]" }); return; }
-            CloseWithResult(NewRouteSkeleton.OfferedTypes[idx].Type);
+            CloseWithResult(NewRouteSkeleton.PickerTypes[idx].Type);
         }
     }
 }

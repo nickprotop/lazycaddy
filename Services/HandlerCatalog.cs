@@ -25,6 +25,8 @@ public static class HandlerCatalog
         new HandlerInfo("vars",            HandlerKind.Middleware, "Vars",            "𝑥"),
         new HandlerInfo("request_body",    HandlerKind.Middleware, "Request body",    "⤓"),
         new HandlerInfo("authentication",  HandlerKind.Middleware, "Authentication",  "🔑"),
+        new HandlerInfo("rate_limit",      HandlerKind.Middleware, "Rate limit",      "⏱"),
+        new HandlerInfo("forward_auth",    HandlerKind.Middleware, "Forward auth",    "🛡"),
         new HandlerInfo("subroute",        HandlerKind.Structural, "Subroute",        "⊞"),
     };
 

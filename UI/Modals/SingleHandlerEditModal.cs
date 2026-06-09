@@ -63,6 +63,14 @@ public sealed class SingleHandlerEditModal : ModalBase<bool>
                     rp.RequestRelayout = () => Modal.ForceRebuildLayout();
                     rp.ConfirmRemove = what => ConfirmDeleteDialog.ShowAsync(WindowSystem, what, Modal);
                 }
+                if (ed is BasicAuthEditor ba)
+                {
+                    ba.OnError = ShowError;
+                    ba.PromptAddUser = () => CredentialDialog.ShowAddAsync(WindowSystem, Modal);
+                    ba.PromptResetPassword = user => CredentialDialog.ShowResetAsync(WindowSystem, user, Modal);
+                    ba.ConfirmRemove = user => ConfirmDeleteDialog.ShowAsync(WindowSystem, $"user {user}", Modal);
+                    ba.RequestRelayout = () => Modal.ForceRebuildLayout();
+                }
                 ed.Build(panel, MarkDirty);
                 tabs.AddTab(ed.TabTitle, panel);
             }

@@ -36,6 +36,7 @@ public sealed class ServerView
         _adminListen, _httpPort, _httpsPort, _grace;
     private CheckboxControl? _h1, _h2, _h3, _disable, _disableRedir, _disableCerts;
     private DropdownControl? _server;
+    private DropdownControl? _tlsMin, _tlsMax, _tlsCipher;
     private TableControl? _logs;
     private MarkupControl? _status;
     private ToolbarControl? _toolbar;
@@ -53,6 +54,19 @@ public sealed class ServerView
         _loadedWriteTo = "", _loadedIdleTo = "", _loadedAdminListen = "", _loadedHttpPort = "",
         _loadedHttpsPort = "", _loadedGrace = "";
     private bool _loadedH1, _loadedH2, _loadedH3, _loadedDisable, _loadedDisableRedir, _loadedDisableCerts;
+    private string _loadedTlsMin = TlsDefault, _loadedTlsMax = TlsDefault, _loadedTlsCipher = CipherDefault;
+
+    // ── TLS-hardening dropdown values ──
+    private const string TlsDefault = "(default)";   // omit protocol_min/max
+    private const string CipherDefault = "Default";  // omit cipher_suites
+    private const string CipherModern = "Modern";    // restrict TLS1.2 to a strong suite list
+    private static readonly string[] ModernCipherSuites =
+    {
+        "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+        "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+        "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305",
+        "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305",
+    };
 
     public ServerView(ConsoleWindowSystem ws, EditCoordinator editor, Action onRefresh)
     {
@@ -104,6 +118,24 @@ public sealed class ServerView
         panel.AddControl(_disableCerts);
         _skip = Field("skip", "skip hosts (CSV)", 48);
         panel.AddControl(_skip);
+
+        // ── TLS HARDENING ── single catch-all tls_connection_policy at index 0.
+        panel.AddControl(Section("TLS HARDENING", accent));
+        _tlsMin = Controls.Dropdown("protocol min: ")
+            .AddItems(TlsDefault, "tls1.2", "tls1.3")
+            .WithName("server_tls_min").WithMargin(2, 0, 2, 0).Build();
+        _tlsMax = Controls.Dropdown("protocol max: ")
+            .AddItems(TlsDefault, "tls1.2", "tls1.3")
+            .WithName("server_tls_max").WithMargin(2, 0, 2, 0).Build();
+        _tlsCipher = Controls.Dropdown("cipher preset: ")
+            .AddItems(CipherDefault, CipherModern)
+            .WithName("server_tls_cipher").WithMargin(2, 0, 2, 0).Build();
+        panel.AddControl(_tlsMin);
+        panel.AddControl(_tlsMax);
+        panel.AddControl(_tlsCipher);
+        panel.AddControl(Controls.Markup()
+            .AddLine($"[{muted}]TLS 1.3 cipher selection is not configurable.[/]")
+            .WithMargin(2, 0, 2, 0).Build());
 
         // ── TIMEOUTS ──
         panel.AddControl(Section("TIMEOUTS", accent));
@@ -222,7 +254,8 @@ public sealed class ServerView
         (_adminListen?.HasFocus ?? false) || (_httpPort?.HasFocus ?? false) || (_httpsPort?.HasFocus ?? false) ||
         (_grace?.HasFocus ?? false) || (_h1?.HasFocus ?? false) || (_h2?.HasFocus ?? false) ||
         (_h3?.HasFocus ?? false) || (_disable?.HasFocus ?? false) || (_disableRedir?.HasFocus ?? false) ||
-        (_disableCerts?.HasFocus ?? false) || (_server?.HasFocus ?? false) || (_logs?.HasFocus ?? false);
+        (_disableCerts?.HasFocus ?? false) || (_server?.HasFocus ?? false) || (_logs?.HasFocus ?? false) ||
+        (_tlsMin?.HasFocus ?? false) || (_tlsMax?.HasFocus ?? false) || (_tlsCipher?.HasFocus ?? false);
 
     // ── Update (poll tick, UI thread) ──
 
@@ -318,6 +351,28 @@ public sealed class ServerView
         SetCheck(_disableRedir, disableRedir, ref _loadedDisableRedir);
         SetCheck(_disableCerts, disableCerts, ref _loadedDisableCerts);
         SetField(_skip, skip, ref _loadedSkip);
+
+        // tls_connection_policies[0] → protocol_min/max + cipher preset (else defaults).
+        string tlsMin = TlsDefault, tlsMax = TlsDefault, tlsCipher = CipherDefault;
+        if (hasServerObj &&
+            server.TryGetProperty("tls_connection_policies", out var pols) &&
+            pols.ValueKind == JsonValueKind.Array && pols.GetArrayLength() > 0)
+        {
+            var p0 = pols[0];
+            if (p0.ValueKind == JsonValueKind.Object)
+            {
+                var min = StringProp(p0, "protocol_min");
+                if (min.Length > 0) tlsMin = min;
+                var max = StringProp(p0, "protocol_max");
+                if (max.Length > 0) tlsMax = max;
+                if (p0.TryGetProperty("cipher_suites", out var cs) &&
+                    cs.ValueKind == JsonValueKind.Array && cs.GetArrayLength() > 0)
+                    tlsCipher = CipherModern;
+            }
+        }
+        SetDropdown(_tlsMin, tlsMin, ref _loadedTlsMin);
+        SetDropdown(_tlsMax, tlsMax, ref _loadedTlsMax);
+        SetDropdown(_tlsCipher, tlsCipher, ref _loadedTlsCipher);
 
         // timeouts (duration strings)
         SetField(_readTo, hasServerObj ? StringProp(server, "read_timeout") : "", ref _loadedReadTo);
@@ -430,7 +485,10 @@ public sealed class ServerView
             || Chk(_h3) != _loadedH3
             || Chk(_disable) != _loadedDisable
             || Chk(_disableRedir) != _loadedDisableRedir
-            || Chk(_disableCerts) != _loadedDisableCerts;
+            || Chk(_disableCerts) != _loadedDisableCerts
+            || CurDd(_tlsMin, _loadedTlsMin) != _loadedTlsMin
+            || CurDd(_tlsMax, _loadedTlsMax) != _loadedTlsMax
+            || CurDd(_tlsCipher, _loadedTlsCipher) != _loadedTlsCipher;
     }
 
     // ── Apply ──
@@ -502,6 +560,24 @@ public sealed class ServerView
                 if (val.Length == 0) skipped.Add("grace_period (clearing not supported)");
                 else changes.Add(("apps/http/grace_period", JsonSerializer.Serialize(val),
                     JsonSerializer.Serialize(_loadedGrace), JsonSerializer.Serialize(val), $"grace_period → {val}"));
+            }
+
+            // TLS hardening — tls_connection_policies array (single catch-all policy at index 0).
+            var curTlsMin = CurDd(_tlsMin, _loadedTlsMin);
+            var curTlsMax = CurDd(_tlsMax, _loadedTlsMax);
+            var curTlsCipher = CurDd(_tlsCipher, _loadedTlsCipher);
+            if (curTlsMin != _loadedTlsMin || curTlsMax != _loadedTlsMax || curTlsCipher != _loadedTlsCipher)
+            {
+                bool allDefault = curTlsMin == TlsDefault && curTlsMax == TlsDefault && curTlsCipher == CipherDefault;
+                if (allDefault)
+                    skipped.Add("tls hardening (clearing not supported)");
+                else
+                    changes.Add((
+                        $"{_serverPath}/tls_connection_policies",
+                        TlsPoliciesArray(curTlsMin, curTlsMax, curTlsCipher),
+                        TlsPoliciesArray(_loadedTlsMin, _loadedTlsMax, _loadedTlsCipher),
+                        TlsPoliciesArray(curTlsMin, curTlsMax, curTlsCipher),
+                        "tls hardening"));
             }
 
             if (changes.Count == 0)
@@ -641,6 +717,8 @@ public sealed class ServerView
         _loadedHttpsPort = Cur(_httpsPort); _loadedGrace = Cur(_grace);
         _loadedH1 = Chk(_h1); _loadedH2 = Chk(_h2); _loadedH3 = Chk(_h3);
         _loadedDisable = Chk(_disable); _loadedDisableRedir = Chk(_disableRedir); _loadedDisableCerts = Chk(_disableCerts);
+        _loadedTlsMin = CurDd(_tlsMin, _loadedTlsMin); _loadedTlsMax = CurDd(_tlsMax, _loadedTlsMax);
+        _loadedTlsCipher = CurDd(_tlsCipher, _loadedTlsCipher);
     }
 
     // Commit only the loaded sentinels of the given (already-applied) changes, identified by path.
@@ -652,6 +730,7 @@ public sealed class ServerView
             if (c.Path.EndsWith("/listen", StringComparison.Ordinal) && c.Path.StartsWith("apps/http/servers", StringComparison.Ordinal)) _loadedListen = Cur(_listen);
             else if (c.Path.EndsWith("/protocols", StringComparison.Ordinal)) { _loadedH1 = Chk(_h1); _loadedH2 = Chk(_h2); _loadedH3 = Chk(_h3); }
             else if (c.Path.EndsWith("/automatic_https", StringComparison.Ordinal)) { _loadedDisable = Chk(_disable); _loadedDisableRedir = Chk(_disableRedir); _loadedDisableCerts = Chk(_disableCerts); _loadedSkip = Cur(_skip); }
+            else if (c.Path.EndsWith("/tls_connection_policies", StringComparison.Ordinal)) { _loadedTlsMin = CurDd(_tlsMin, _loadedTlsMin); _loadedTlsMax = CurDd(_tlsMax, _loadedTlsMax); _loadedTlsCipher = CurDd(_tlsCipher, _loadedTlsCipher); }
             else if (c.Path.EndsWith("/read_timeout", StringComparison.Ordinal)) _loadedReadTo = Cur(_readTo);
             else if (c.Path.EndsWith("/read_header_timeout", StringComparison.Ordinal)) _loadedReadHdrTo = Cur(_readHdrTo);
             else if (c.Path.EndsWith("/write_timeout", StringComparison.Ordinal)) _loadedWriteTo = Cur(_writeTo);
@@ -665,6 +744,13 @@ public sealed class ServerView
 
     private static string Cur(PromptControl? c) => (c?.Input ?? "").Trim();
     private static bool Chk(CheckboxControl? c) => c?.Checked ?? false;
+    private static string CurDd(DropdownControl? c, string fallback) => c?.SelectedValue ?? fallback;
+
+    private static void SetDropdown(DropdownControl? c, string value, ref string loaded)
+    {
+        if (c is not null) c.SelectedValue = value;
+        loaded = value;
+    }
 
     private static void SetField(PromptControl? c, string value, ref string loaded)
     {
@@ -676,6 +762,20 @@ public sealed class ServerView
     {
         if (c is not null) c.Checked = value;
         loaded = value;
+    }
+
+    // Build the tls_connection_policies array JSON for the chosen min/max/cipher. An all-default
+    // selection yields `[]` (used only for the old-value diff display; the apply path skips it).
+    private static string TlsPoliciesArray(string min, string max, string cipher)
+    {
+        if (min == TlsDefault && max == TlsDefault && cipher == CipherDefault)
+            return "[]";
+        var policy = new Dictionary<string, object>();
+        if (min != TlsDefault) policy["protocol_min"] = min;
+        if (max != TlsDefault) policy["protocol_max"] = max;
+        if (cipher == CipherModern) policy["cipher_suites"] = ModernCipherSuites;
+        return JsonSerializer.Serialize(new object[] { policy },
+            new JsonSerializerOptions { WriteIndented = true });
     }
 
     private static string[] Csv(string s) =>

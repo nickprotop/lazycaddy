@@ -15,10 +15,27 @@ public static class NewRouteSkeleton
     /// <summary>An offered handler type for creation: the JSON `Type`, display name, and icon.</summary>
     public sealed record Offered(string Type, string DisplayName, string Icon);
 
-    // Leaf + middleware handlers that have a form (from HandlerCatalog, minus subroute), plus redir.
+    // Leaf + middleware handlers offered by the new-route wizard (from HandlerCatalog, minus
+    // subroute, minus forward_auth — which has no MinimalHandler and is only added via its modal
+    // on existing routes), plus the synthetic redir.
     public static readonly IReadOnlyList<Offered> OfferedTypes = BuildOffered();
 
+    // Types offered by the add-handler picker on an existing route. Same as the wizard's set, but
+    // also includes forward_auth — the picker maps it to its modal rather than a MinimalHandler.
+    public static readonly IReadOnlyList<Offered> PickerTypes = BuildPicker();
+
     private static IReadOnlyList<Offered> BuildOffered()
+    {
+        var list = HandlerCatalog.All
+            .Where(h => h.Kind is HandlerKind.Leaf or HandlerKind.Middleware
+                        && h.Type != "subroute" && h.Type != "forward_auth")
+            .Select(h => new Offered(h.Type, h.DisplayName, h.Icon))
+            .ToList();
+        list.Add(new Offered("redir", "Redirect", "⇲"));
+        return list;
+    }
+
+    private static IReadOnlyList<Offered> BuildPicker()
     {
         var list = HandlerCatalog.All
             .Where(h => h.Kind is HandlerKind.Leaf or HandlerKind.Middleware && h.Type != "subroute")
@@ -43,6 +60,7 @@ public static class NewRouteSkeleton
                 ["headers"] = new Dictionary<string, object> { ["Location"] = new[] { "http://example.com" } },
                 ["status_code"] = 302,
             },
+            "rate_limit" => new() { ["handler"] = "rate_limit", ["rate_limits"] = new Dictionary<string, object>() },
             _ => new() { ["handler"] = type },
         };
         return JsonSerializer.Serialize(o, Opt);

@@ -37,6 +37,7 @@ internal static class HandlerEditorFactory
                 break;
             case "headers":
                 yield return new HeadersEditor(p);
+                yield return new SecurityHeadersEditor(p);
                 break;
             case "encode":
                 yield return new EncodeEditor(p);
@@ -51,7 +52,10 @@ internal static class HandlerEditorFactory
                 yield return new TemplatesEditor(p);
                 break;
             case "authentication":
-                yield return new AuthenticationEditor(p);
+                yield return new BasicAuthEditor(p);
+                break;
+            case "rate_limit":
+                yield return new RateLimitEditor(p);
                 break;
             default:
                 break;

@@ -31,6 +31,8 @@ public sealed class RoutesView
     private CaddySnapshot? _snapshot;                            // cached for toggle-rebuild
     private bool _isPopulating;                                  // reentrancy guard
 
+    private static readonly HashSet<string> SecurityTypes = new() { "authentication", "headers", "rate_limit" };
+
     public RoutesView(ConsoleWindowSystem windowSystem, EditCoordinator editor)
     {
         _windowSystem = windowSystem;
@@ -104,6 +106,9 @@ public sealed class RoutesView
                     return true;
                 case ConsoleKey.A:
                     _ = AddHandlerAsync(route);
+                    return true;
+                case ConsoleKey.I:
+                    _ = IpAccessAsync(route);
                     return true;
                 case ConsoleKey.H:
                     if (route.TlsEnabled) _ = DisableHttpsAsync(route);
@@ -334,6 +339,7 @@ public sealed class RoutesView
             {
                 actions.Add(new(ViewToolbar.Caption("✎", "Edit match", "e"), () => EditMatch(route)));
                 actions.Add(new(ViewToolbar.Caption("⚙", "Add handler", "a"), () => _ = AddHandlerAsync(route)));
+                actions.Add(new(ViewToolbar.Caption("⛒", "IP access", "i"), () => _ = IpAccessAsync(route)));
                 if (route.TlsEnabled)
                     actions.Add(new(ViewToolbar.Caption("🔓", "Disable HTTPS", "h"), () => _ = DisableHttpsAsync(route)));
                 else
@@ -408,20 +414,63 @@ public sealed class RoutesView
             "reorder handlers");
     }
 
-    // Append a minimal handler of a chosen type to the route's primary handle[] array.
+    // Append (or splice) a minimal handler of a chosen type into the route's primary handle[] array.
+    // Security handler types (authentication, headers, rate_limit) are inserted BEFORE the
+    // first terminal handler so they actually apply; all other types are appended.
     private async Task AddHandlerAsync(Route route)
     {
         var type = await HandlerTypePicker.ShowAsync(_windowSystem);
         if (string.IsNullOrEmpty(type)) return;
 
+        if (type == "forward_auth")
+        {
+            var choice = await ForwardAuthModal.ShowAsync(_windowSystem);
+            if (choice is not { } fa) return;
+            var fjson = SecurityHandlerPatch.ForwardAuth(fa.Provider, fa.Upstream);
+            var arrF = ResolvePrimaryHandlerArray(route, route.RawConfigJson);
+            string arrJsonF;
+            try { arrJsonF = await _editor.GetConfigNodeAsync(arrF); } catch { arrJsonF = "[]"; }
+            var idxF = SecurityHandlerPlacement.InsertIndex(arrJsonF);
+            var splicedF = SpliceAt(arrJsonF, idxF, fjson);
+            var resF = await _editor.ApplyAsync((admin, ct) => admin.PatchConfigAsync(arrF, splicedF, ct), "add forward_auth handler");
+            if (resF.Success) _expandedRoutes.Add(route.ConfigPath);
+            return;
+        }
+
         var arr = ResolvePrimaryHandlerArray(route, route.RawConfigJson);
         var json = NewRouteSkeleton.MinimalHandler(type);
-        var res = await _editor.ApplyAsync(
-            (admin, ct) => admin.PostConfigAsync(arr, json, ct),
-            $"add {type} handler");
+
+        WriteResult res;
+        if (SecurityTypes.Contains(type))
+        {
+            string arrayJson;
+            try { arrayJson = await _editor.GetConfigNodeAsync(arr); }
+            catch { arrayJson = "[]"; }
+            var idx = SecurityHandlerPlacement.InsertIndex(arrayJson);
+            var spliced = SpliceAt(arrayJson, idx, json);
+            res = await _editor.ApplyAsync((admin, ct) => admin.PatchConfigAsync(arr, spliced, ct), $"add {type} handler");
+        }
+        else
+        {
+            res = await _editor.ApplyAsync((admin, ct) => admin.PostConfigAsync(arr, json, ct), $"add {type} handler");
+        }
 
         // Expand the route so the new handler shows on the next poll.
         if (res.Success) _expandedRoutes.Add(route.ConfigPath);
+    }
+
+    // Insert `elementJson` into the JSON array `arrayJson` at `index` (clamped). Returns new array JSON.
+    private static string SpliceAt(string arrayJson, int index, string elementJson)
+    {
+        try
+        {
+            var arr = System.Text.Json.Nodes.JsonNode.Parse(arrayJson) as System.Text.Json.Nodes.JsonArray ?? new();
+            var el = System.Text.Json.Nodes.JsonNode.Parse(elementJson);
+            index = Math.Clamp(index, 0, arr.Count);
+            arr.Insert(index, el);
+            return arr.ToJsonString();
+        }
+        catch { return arrayJson; }
     }
 
     // The config path of the route's primary handle[] array — derived from the first
@@ -446,6 +495,11 @@ public sealed class RoutesView
     private void EditMatch(Route route)
     {
         _ = MatchEditModal.ShowAsync(_windowSystem, route, _editor);
+    }
+
+    private async Task IpAccessAsync(Route route)
+    {
+        await IpAccessModal.ShowAsync(_windowSystem, route, _editor);
     }
 
     private void NewRoute()
