@@ -185,11 +185,22 @@ public sealed class OverviewView
             $"[{muted}]proxied hosts → upstreams[/]",
         }));
 
+        var certHealth = Services.CertExpiry.Summarize(snap.Certs, snap.Timestamp);
+        // Second line: healthy count, or "expiry unknown" when nothing's readable.
+        var certHealthy = certHealth.Ok == 0 && certHealth.Unknown > 0
+            ? $"[{muted}]●[/] [bold]{certHealth.Unknown}[/] [{muted}]expiry unknown[/]"
+            : $"[{good}]●[/] [bold {good}]{certHealth.Ok}[/] [{muted}]healthy[/]";
+        // Third line escalates: expired/critical in red when present, else the plain expiring count.
+        var certAlert = certHealth.Expired > 0
+            ? $"[{bad}]▲[/] [bold {bad}]{certHealth.Expired}[/] [{muted}]expired[/]"
+            : certHealth.Critical > 0
+                ? $"[{bad}]▲[/] [bold {bad}]{certHealth.Critical}[/] [{muted}]critical (<14d)[/]"
+                : $"[{warn}]●[/] [bold {warn}]{certHealth.Warning}[/] [{muted}]expiring (<30d)[/]";
         _certsCard?.SetContent(string.Join('\n', new[]
         {
             "",
-            $"[{good}]●[/] [bold {good}]{s.CertValidCount}[/] [{muted}]valid[/]",
-            $"[{warn}]●[/] [bold {warn}]{s.CertExpiringCount}[/] [{muted}]expiring (<30d)[/]",
+            certHealthy,
+            certAlert,
             "",
             $"[{muted}]TLS certificate health[/]",
         }));

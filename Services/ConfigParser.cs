@@ -128,13 +128,15 @@ public static class ConfigParser
             foreach (var s in subs.EnumerateArray())
             {
                 if (s.ValueKind != JsonValueKind.String) continue;
+                // Expiry is not in the admin API; CaddyAdminClient enriches it from the on-disk
+                // cert file afterward. Until/unless that succeeds, mark expiry unknown so the UI
+                // never shows a fake "90 days" or a false "all healthy".
                 certs.Add(new Cert(
                     Domain: s.GetString()!,
                     Issuer: issuer,
-                    // Real expiry needs cert metadata (filesystem / future endpoint);
-                    // until then report a placeholder far-future date.
-                    Expires: DateTimeOffset.Now.AddDays(90),
-                    AcmeStatus: "managed"));
+                    Expires: default,
+                    AcmeStatus: "managed",
+                    ExpiryKnown: false));
             }
         }
         return certs;

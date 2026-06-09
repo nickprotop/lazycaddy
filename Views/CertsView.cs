@@ -23,6 +23,7 @@ public sealed class CertsView
 
     private TableControl? _table;
     private ToolbarControl? _toolbar;
+    private MarkupControl? _banner;
 
     public CertsView(ConsoleWindowSystem ws, EditCoordinator editor) { _ws = ws; _editor = editor; }
 
@@ -53,9 +54,12 @@ public sealed class CertsView
 
         panel.AddControl(Controls.Markup()
             .AddLine($"[bold {accent}]TLS / Certs[/]")
-            .AddLine($"[{muted}]Certificate health. Days-left is color-coded by urgency.[/]")
+            .AddLine($"[{muted}]Certificate health. Soonest-to-expire first; days-left color-coded by urgency.[/]")
             .AddEmptyLine()
             .Build());
+
+        _banner = Controls.Markup().WithMargin(2, 0, 2, 0).Build();
+        panel.AddControl(_banner);
 
         _toolbar = ViewToolbar.Create("certsToolbar");
         panel.AddControl(_toolbar);
@@ -99,21 +103,58 @@ public sealed class CertsView
         if (snap is null || _table is null) return;
 
         var now = snap.Timestamp;
+        var sorted = CertExpiry.SortByUrgency(snap.Certs); // soonest-expiry first
+        UpdateBanner(CertExpiry.Summarize(sorted, now));
+
         int prev = _table.SelectedRowIndex;
         _table.ClearRows();
-        foreach (var c in snap.Certs)
+        var muted = UIConstants.MutedText.ToMarkup();
+        foreach (var c in sorted)
         {
+            var expires = c.ExpiryKnown ? c.Expires.ToString("yyyy-MM-dd") : "—";
+            var daysLeft = c.ExpiryKnown ? UIConstants.DaysLeftMarkup(c.DaysLeft(now)) : $"[{muted}]unknown[/]";
             _table.AddRow(new TableRow(
                 Escape(c.Domain),
                 Escape(c.Issuer),
-                c.Expires.ToString("yyyy-MM-dd"),
-                UIConstants.DaysLeftMarkup(c.DaysLeft(now)),
+                expires,
+                daysLeft,
                 UIConstants.StatusMarkup(c.AcmeStatus))
             { Tag = c });
         }
-        if (snap.Certs.Count > 0)
-            _table.SelectedRowIndex = prev >= 0 && prev < snap.Certs.Count ? prev : 0;
+        if (sorted.Count > 0)
+            _table.SelectedRowIndex = prev >= 0 && prev < sorted.Count ? prev : 0;
         RebuildToolbar();
+    }
+
+    // A one-line health banner: green "all healthy" when nothing's due, else a red/amber
+    // count of expired / critical (<14d) / expiring (<30d) certs.
+    private void UpdateBanner(CertHealth h)
+    {
+        if (_banner is null) return;
+        var muted = UIConstants.MutedText.ToMarkup();
+
+        if (h.Total == 0) { _banner.SetContent(new List<string> { $"[{muted}]No certificates managed by this Caddy instance.[/]" }); return; }
+
+        // The unknown-expiry note (appended to whatever the alert/healthy line says).
+        var unknownNote = h.Unknown > 0
+            ? $"   [{muted}]· {h.Unknown} expiry unknown (read on the Caddy host)[/]"
+            : "";
+
+        if (!h.HasAlert)
+        {
+            var line = h.Ok > 0
+                ? $"[{UIConstants.Good.ToMarkup()}]●[/] [{muted}]{h.Ok} certificate(s) healthy (≥{CertExpiry.WarningDays}d).[/]"
+                : $"[{muted}]No expiry data available.[/]";
+            _banner.SetContent(new List<string> { line + unknownNote });
+            return;
+        }
+
+        var parts = new List<string>();
+        if (h.Expired > 0) parts.Add($"[{UIConstants.Bad.ToMarkup()}]{h.Expired} expired[/]");
+        if (h.Critical > 0) parts.Add($"[{UIConstants.Bad.ToMarkup()}]{h.Critical} critical (<{CertExpiry.CriticalDays}d)[/]");
+        if (h.Warning > 0) parts.Add($"[{UIConstants.Warn.ToMarkup()}]{h.Warning} expiring (<{CertExpiry.WarningDays}d)[/]");
+        var icon = h.HasCritical ? $"[{UIConstants.Bad.ToMarkup()}]▲[/]" : $"[{UIConstants.Warn.ToMarkup()}]▲[/]";
+        _banner.SetContent(new List<string> { $"{icon} {string.Join($"[{muted}],[/] ", parts)}" + unknownNote });
     }
 
     private static string Escape(string s) => s.Replace("[", "[[").Replace("]", "]]");

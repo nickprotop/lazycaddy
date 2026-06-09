@@ -46,6 +46,11 @@ public sealed record LazyCaddyConfig
     /// <summary>When true, all writes are blocked (safety/demo).</summary>
     public bool ReadOnly { get; init; } = false;
 
+    /// <summary>Caddy's data directory, used to read real certificate expiry from disk
+    /// (the admin API doesn't expose it). Defaults to Caddy's standard location; only useful
+    /// when LazyCaddy runs on the same host as Caddy.</summary>
+    public string CaddyDataDir { get; init; } = LazyCaddy.Services.CertStore.DefaultDataDir();
+
     /// <summary>
     /// Snapshot directory scoped to <see cref="AdminApiUrl"/> so snapshots from different
     /// Caddy instances never mix (a restore must not POST one instance's config into another).

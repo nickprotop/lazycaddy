@@ -49,7 +49,11 @@ public sealed record Cert(
     string Domain,
     string Issuer,
     DateTimeOffset Expires,
-    string AcmeStatus)
+    string AcmeStatus,
+    // False when the real expiry couldn't be read (Caddy's admin API doesn't expose it; we read
+    // the cert file from disk, which only works when LazyCaddy runs on the same host as Caddy).
+    // When false, Expires is meaningless and the UI shows "unknown" instead of a days-left value.
+    bool ExpiryKnown = true)
 {
     /// <summary>Whole days until expiry from <paramref name="now"/> (floored, may be negative).</summary>
     public int DaysLeft(DateTimeOffset now) => (int)Math.Floor((Expires - now).TotalDays);

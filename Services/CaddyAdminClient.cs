@@ -28,6 +28,9 @@ public sealed class CaddyAdminClient : ICaddyAdmin, IDisposable
     private readonly List<double> _rateHistory = new();
     private const int RateHistoryMax = 50;
 
+    // Reads real cert expiry from Caddy's on-disk storage (admin API doesn't expose it).
+    private readonly CertStore _certStore;
+
     public CaddyAdminClient(LazyCaddyConfig config, bool simulateDisconnected = false)
         : this(config, null, simulateDisconnected) { }
 
@@ -38,6 +41,7 @@ public sealed class CaddyAdminClient : ICaddyAdmin, IDisposable
         _http.BaseAddress = new Uri(config.AdminApiUrl.TrimEnd('/') + "/");
         _http.Timeout = TimeSpan.FromMilliseconds(config.HttpTimeoutMs);
         _simulateDisconnected = simulateDisconnected;
+        _certStore = new CertStore(config.CaddyDataDir);
     }
 
     private void ThrowIfSimulatingDisconnect()
@@ -92,7 +96,15 @@ public sealed class CaddyAdminClient : ICaddyAdmin, IDisposable
     {
         ThrowIfSimulatingDisconnect();
         var json = await GetStringAsync("config/", ct).ConfigureAwait(false);
-        return ConfigParser.ParseCerts(json);
+        var certs = ConfigParser.ParseCerts(json);
+
+        // Enrich each managed subject with its real on-disk expiry (admin API doesn't expose it).
+        // Found → known expiry; not found (remote host / different storage) → expiry stays unknown.
+        return certs.Select(c =>
+        {
+            var expiry = _certStore.ExpiryFor(c.Domain);
+            return expiry is { } e ? c with { Expires = e, ExpiryKnown = true } : c;
+        }).ToList();
     }
 
     public async Task<IReadOnlyList<Upstream>> GetUpstreamsAsync(CancellationToken ct = default)
