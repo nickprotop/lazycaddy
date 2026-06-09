@@ -6,6 +6,8 @@
 // no references to UI types.
 // -----------------------------------------------------------------------
 
+using LazyCaddy.Services;
+
 namespace LazyCaddy.Models;
 
 /// <summary>Overall health/identity of the running Caddy instance.</summary>
@@ -74,9 +76,14 @@ public sealed record Upstream(
 /// </remarks>
 public sealed record MetricsSnapshot(
     bool Available,
-    IReadOnlyList<double> RequestRate)
+    IReadOnlyList<double> RequestRate,
+    StatusClassCounts StatusClasses,
+    double InFlight,
+    LatencyPercentiles Latency,
+    IReadOnlyList<LabelCount> TopHandlers)
 {
-    public static MetricsSnapshot Unavailable => new(false, Array.Empty<double>());
+    public static MetricsSnapshot Unavailable => new(
+        false, Array.Empty<double>(), default, 0, LatencyPercentiles.Unavailable, Array.Empty<LabelCount>());
 }
 
 /// <summary>The full set of data produced by one poll, plus a timestamp.</summary>

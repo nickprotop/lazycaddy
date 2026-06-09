@@ -27,6 +27,7 @@ public sealed class OverviewView
     private PanelControl? _sitesCard;
     private PanelControl? _certsCard;
     private PanelControl? _upstreamsCard;
+    private PanelControl? _trafficCard;
     private SparklineControl? _sparkline;
 
     // Resize/relayout state: the panel we live in, the cards, the row-grid controls
@@ -55,7 +56,8 @@ public sealed class OverviewView
         _sitesCard = Card("Sites");
         _certsCard = Card("Certs");
         _upstreamsCard = Card("Upstreams");
-        _cards = new[] { _caddyCard, _sitesCard, _certsCard, _upstreamsCard };
+        _trafficCard = Card("Traffic");
+        _cards = new[] { _caddyCard, _sitesCard, _certsCard, _upstreamsCard, _trafficCard };
 
         // Card rows are inserted starting here; on resize we remove and rebuild them
         // in place, leaving the header above and the sparkline below untouched.
@@ -201,6 +203,8 @@ public sealed class OverviewView
             $"[{muted}]active reachability probes[/]",
         }));
 
+        _trafficCard?.SetContent(TrafficCardContent(snap.Metrics, muted, good, warn, bad));
+
         if (_sparkline is not null)
         {
             if (snap.Metrics.Available && snap.Metrics.RequestRate.Count > 0)
@@ -214,6 +218,47 @@ public sealed class OverviewView
                 _sparkline.Visible = false;
             }
         }
+    }
+
+    // The Traffic card: current rate, in-flight, p95 latency, and a 2xx/4xx/5xx split.
+    // caddy_http_requests_total is often absent until traffic flows; show a hint then.
+    private static string TrafficCardContent(Models.MetricsSnapshot m, string muted, string good, string warn, string bad)
+    {
+        if (!m.Available)
+            return "\n" + $"[{muted}]/metrics not enabled[/]";
+
+        var rate = m.RequestRate.Count > 0 ? m.RequestRate[^1] : 0d;
+        var sc = m.StatusClasses;
+        if (sc.Total <= 0)
+            return string.Join('\n', new[]
+            {
+                "",
+                $"[bold {good}]{rate:0.0}[/] [{muted}]req/s[/]",
+                "",
+                $"[{muted}]no requests yet[/]",
+            });
+
+        var p95 = m.Latency.Available ? FormatMs(m.Latency.P95) : "—";
+        double pct(double v) => sc.Total > 0 ? 100.0 * v / sc.Total : 0;
+        return string.Join('\n', new[]
+        {
+            "",
+            $"[bold {good}]{rate:0.0}[/] [{muted}]req/s[/]   [{muted}]in-flight[/] {m.InFlight:0}",
+            $"[{muted}]p95[/] {p95}",
+            "",
+            $"[{good}]{pct(sc.C2xx):0}%[/] [{muted}]2xx[/]  [{warn}]{pct(sc.C4xx):0}%[/] [{muted}]4xx[/]  [{bad}]{pct(sc.C5xx):0}%[/] [{muted}]5xx[/]",
+        });
+    }
+
+    // Seconds → a compact human latency string (µs/ms/s).
+    internal static string FormatMs(double seconds)
+    {
+        if (seconds <= 0) return "0ms";
+        var ms = seconds * 1000.0;
+        if (ms < 1) return $"{seconds * 1_000_000:0}µs";
+        if (ms < 100) return $"{ms:0.0}ms";
+        if (ms < 1000) return $"{ms:0}ms";
+        return $"{seconds:0.00}s";
     }
 
     private static IEnumerable<T[]> Chunk<T>(IReadOnlyList<T> items, int size)

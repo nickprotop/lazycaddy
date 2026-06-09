@@ -140,7 +140,13 @@ public sealed class CaddyAdminClient : ICaddyAdmin, IDisposable
         _prevRequestsTotal = total;
         _prevMetricsAt = now;
 
-        return new MetricsSnapshot(Available: true, RequestRate: _rateHistory.ToArray());
+        return new MetricsSnapshot(
+            Available: true,
+            RequestRate: _rateHistory.ToArray(),
+            StatusClasses: MetricsParser.StatusClasses(text),
+            InFlight: MetricsParser.InFlight(text),
+            Latency: MetricsParser.Percentiles(text),
+            TopHandlers: MetricsParser.TopByLabel(text, "caddy_http_requests_total", "handler", 6));
     }
 
     public async Task<string> GetRawConfigAsync(CancellationToken ct = default)
