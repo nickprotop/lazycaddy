@@ -19,6 +19,7 @@ public sealed class UpstreamsView
 
     private TableControl? _table;
     private int _spinnerTick;
+    private string? _renderedSignature;   // skip rebuild when settled + unchanged (see Update)
 
     public void Build(ScrollablePanelControl panel)
     {
@@ -46,6 +47,7 @@ public sealed class UpstreamsView
             .Build();
 
         panel.AddControl(_table);
+        _renderedSignature = null;   // fresh table on reopen — force first Update to populate
     }
 
     public void Update(DashboardState state)
@@ -55,6 +57,16 @@ public sealed class UpstreamsView
 
         _spinnerTick++;
         var spinner = SpinnerFrames[_spinnerTick % SpinnerFrames.Length];
+
+        // Skip the per-tick ClearRows()+rebuild when nothing changed — avoids flicker and wasted
+        // work each poll. BUT the reachability cell animates a spinner while a probe is in flight,
+        // so only skip when every upstream has settled (Up/Down); keep rebuilding while probing.
+        bool anyProbing = snap.Upstreams.Any(u =>
+            u.Reachability is UpstreamReachability.Probing or UpstreamReachability.Unknown);
+        var sig = string.Join("\n", snap.Upstreams.Select(u =>
+            $"{u.Address}|{u.Reachability}|{u.Latency?.TotalMilliseconds:F0}|{string.Join(",", u.UsedByRoutes)}"));
+        if (!anyProbing && sig == _renderedSignature) return;
+        _renderedSignature = sig;
 
         _table.ClearRows();
         foreach (var u in snap.Upstreams)

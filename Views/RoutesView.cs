@@ -30,6 +30,12 @@ public sealed class RoutesView
     private readonly HashSet<string> _expandedRoutes = new();   // keyed by route.ConfigPath
     private CaddySnapshot? _snapshot;                            // cached for toggle-rebuild
     private bool _isPopulating;                                  // reentrancy guard
+    // Fingerprint of the rows currently displayed. Each poll builds a fresh (non-reference-equal)
+    // snapshot, so without this guard the table would ClearRows()+rebuild every tick even when
+    // nothing changed — flickering the table, re-firing SelectedRowChanged, and burning CPU. We
+    // only rebuild when the visible content actually changes. (Focus survives a rebuild at the
+    // framework level, so this is a perf/flicker optimization, not a focus fix.)
+    private string? _renderedSignature;
 
     private static readonly HashSet<string> SecurityTypes = new() { "authentication", "headers", "rate_limit" };
 
@@ -76,6 +82,10 @@ public sealed class RoutesView
 
         panel.AddControl(_table);
         RebuildToolbar();
+
+        // NavigationView rebuilds this view (a fresh empty table) each time it's reopened. Reset
+        // the render fingerprint so the next Update repopulates rather than skipping as unchanged.
+        _renderedSignature = null;
     }
 
     public void Update(DashboardState state) => Populate(state.Snapshot);
@@ -191,27 +201,56 @@ public sealed class RoutesView
     private void Populate(CaddySnapshot? snap)
     {
         if (snap is null || _table is null || _isPopulating) return;
+        _snapshot = snap;
+        // Prune expanded IDs for routes that no longer exist.
+        _expandedRoutes.IntersectWith(snap.Routes.Select(r => r.ConfigPath));
+
+        // Skip the teardown/rebuild entirely when the visible content is unchanged — the common
+        // case, since every poll hands us a fresh-but-identical snapshot. Avoids per-tick
+        // ClearRows() churn (flicker, spurious SelectedRowChanged, CPU).
+        var sig = ComputeSignature(snap.Routes);
+        if (sig == _renderedSignature) { RebuildToolbar(); return; }
+
         _isPopulating = true;
-        try
-        {
-            _snapshot = snap;
-            // Prune expanded IDs for routes that no longer exist.
-            _expandedRoutes.IntersectWith(snap.Routes.Select(r => r.ConfigPath));
-            BuildRowsCore(snap.Routes);
-        }
+        try { BuildRowsCore(snap.Routes); }
         finally { _isPopulating = false; }
+        _renderedSignature = sig;
         RebuildToolbar();
     }
 
     // RebuildThreadedTable analog: re-lay the rows from the cached snapshot (no new
-    // data) after an expand/collapse toggle.
+    // data) after an expand/collapse toggle. Always rebuilds (the expansion set changed),
+    // then refreshes the signature so the next poll doesn't redundantly rebuild.
     private void RebuildRows()
     {
         if (_snapshot is null || _table is null || _isPopulating) return;
         _isPopulating = true;
         try { BuildRowsCore(_snapshot.Routes); }
         finally { _isPopulating = false; }
+        _renderedSignature = ComputeSignature(_snapshot.Routes);
         RebuildToolbar();
+    }
+
+    // A fingerprint of exactly what determines the rendered rows: each route's identity and the
+    // visible columns, plus whether it's expanded (which adds its handler child rows).
+    private string ComputeSignature(IReadOnlyList<Route> routes)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var r in routes)
+        {
+            bool expanded = _expandedRoutes.Contains(r.ConfigPath);
+            sb.Append(r.ConfigPath).Append('|')
+              .Append(r.HostOrMatch).Append('|')
+              .Append(r.Upstream).Append('|')
+              .Append(r.TlsEnabled ? '1' : '0').Append('|')
+              .Append(r.Status).Append('|')
+              .Append(expanded ? 'E' : 'c');
+            // Expanded routes render handler child rows from RawConfigJson, so a handler edit that
+            // leaves host/upstream/status unchanged must still force a rebuild — fold the config in.
+            if (expanded) sb.Append('|').Append(r.RawConfigJson);
+            sb.Append('\n');
+        }
+        return sb.ToString();
     }
 
     // Shared core: capture selection + scroll, clear, re-add route rows (with handler

@@ -24,6 +24,7 @@ public sealed class CertsView
     private TableControl? _table;
     private ToolbarControl? _toolbar;
     private MarkupControl? _banner;
+    private string? _renderedSignature;   // skip rebuild when unchanged (see Update)
 
     public CertsView(ConsoleWindowSystem ws, EditCoordinator editor) { _ws = ws; _editor = editor; }
 
@@ -85,6 +86,7 @@ public sealed class CertsView
 
         panel.AddControl(_table);
         RebuildToolbar();
+        _renderedSignature = null;   // fresh table on reopen — force first Update to populate
     }
 
     private void RebuildToolbar()
@@ -105,6 +107,14 @@ public sealed class CertsView
         var now = snap.Timestamp;
         var sorted = CertExpiry.SortByUrgency(snap.Certs); // soonest-expiry first
         UpdateBanner(CertExpiry.Summarize(sorted, now));
+
+        // Skip the per-tick ClearRows()+rebuild when nothing visible changed — avoids flicker and
+        // wasted work each poll. Days-left is derived from `now`, but only crosses a threshold
+        // daily — quantize to the day so routine sub-second timestamp drift doesn't force rebuilds.
+        var sig = string.Join("\n", sorted.Select(c =>
+            $"{c.Domain}|{c.Issuer}|{c.AcmeStatus}|{(c.ExpiryKnown ? c.Expires.ToString("yyyy-MM-dd") : "?")}|{(c.ExpiryKnown ? c.DaysLeft(now) : -1)}"));
+        if (sig == _renderedSignature) { RebuildToolbar(); return; }
+        _renderedSignature = sig;
 
         int prev = _table.SelectedRowIndex;
         _table.ClearRows();
