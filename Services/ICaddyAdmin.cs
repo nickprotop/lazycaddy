@@ -54,6 +54,9 @@ public interface ICaddyAdmin
 
     /// <summary>Replace the entire running config (POST /load).</summary>
     Task<WriteResult> LoadConfigAsync(string fullConfigJson, CancellationToken ct = default);
+
+    /// <summary>Adapt a Caddyfile to JSON via POST /adapt. Does NOT change the running config.</summary>
+    Task<AdaptResult> AdaptCaddyfileAsync(string caddyfile, CancellationToken ct = default);
 }
 
 /// <summary>Outcome of a write: success, or Caddy's verbatim error body.</summary>

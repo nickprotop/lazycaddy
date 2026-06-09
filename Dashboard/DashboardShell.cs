@@ -35,6 +35,7 @@ public sealed class DashboardShell
     private readonly SnapshotsView _snapshots;
     private readonly TopologyView _topology = new();
     private readonly MetricsView _metrics = new();
+    private readonly AdaptView _adapt;
     private readonly ServerView _server;
 
     private Window? _window;
@@ -64,6 +65,7 @@ public sealed class DashboardShell
         _upstreams = new UpstreamsView();
         _rawConfig = new RawConfigView(ws, editor);
         _snapshots = new SnapshotsView(ws, editor);
+        _adapt = new AdaptView(ws, editor);
         _server = new ServerView(ws, editor, RequestRefresh);
     }
 
@@ -144,6 +146,8 @@ public sealed class DashboardShell
                     content: WithInitialData(_topology.Build, _topology.Update));
                 h.AddItem("Metrics", icon: "📈", subtitle: "Traffic & latency",
                     content: WithInitialData(_metrics.Build, _metrics.Update));
+                h.AddItem("Caddyfile", icon: "⇄", subtitle: "Adapt to JSON",
+                    content: WithInitialData(_adapt.Build, _adapt.Update));
                 h.AddItem("Server", icon: "⚙", subtitle: "Server & global settings",
                     content: WithInitialData(_server.Build, _server.Update));
             })
@@ -200,7 +204,7 @@ public sealed class DashboardShell
     // 1 Overview · 2 Routes · 3 TLS/Certs · 4 Upstreams · 5 Raw Config · 6 Snapshots · 7 Topology · 8 Server.
     // So SelectedIndex == digit (header offset of 1). This handler only fires for the
     // main window; modal prompts capture their own keys, so digits aren't hijacked.
-    private const int ViewCount = 9;
+    private const int ViewCount = 10;
 
     private void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
@@ -215,6 +219,7 @@ public sealed class DashboardShell
         if (_certs.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_snapshots.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_rawConfig.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
+        if (_adapt.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_server.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
 
         switch (e.KeyInfo.Key)
@@ -344,6 +349,7 @@ public sealed class DashboardShell
         _snapshots.Update(_state);
         _topology.Update(_state);
         _metrics.Update(_state);
+        _adapt.Update(_state);
         _server.Update(_state);
     }
 

@@ -38,6 +38,26 @@ public sealed class EditCoordinator
     public Task<string> GetRawConfigAsync(CancellationToken ct = default)
         => _admin.GetRawConfigAsync(ct);
 
+    /// <summary>Adapt a Caddyfile to JSON (passthrough; does not change the running config).</summary>
+    public Task<AdaptResult> AdaptCaddyfileAsync(string caddyfile, CancellationToken ct = default)
+        => _admin.AdaptCaddyfileAsync(caddyfile, ct);
+
+    /// <summary>Snapshot the current config, then replace it wholesale via POST /load.</summary>
+    public async Task<WriteResult> LoadFullConfigAsync(string fullConfigJson, string snapshotLabel, CancellationToken ct = default)
+    {
+        if (_config.ReadOnly) return WriteResult.Fail("Editing is disabled (read-only mode).");
+        try
+        {
+            var current = await _admin.GetRawConfigAsync(ct).ConfigureAwait(false);
+            _snapshots.Capture(current, snapshotLabel);
+        }
+        catch (Exception ex)
+        {
+            return WriteResult.Fail($"Could not snapshot before load: {ex.Message}");
+        }
+        return await _admin.LoadConfigAsync(fullConfigJson, ct).ConfigureAwait(false);
+    }
+
     /// <summary>Snapshot the current full config, then run <paramref name="write"/>.</summary>
     public async Task<WriteResult> ApplyAsync(
         Func<ICaddyAdmin, CancellationToken, Task<WriteResult>> write,

@@ -202,6 +202,25 @@ public sealed class CaddyAdminClient : ICaddyAdmin, IDisposable
     public Task<WriteResult> LoadConfigAsync(string fullConfigJson, CancellationToken ct = default)
         => SendWriteAsync(HttpMethod.Post, "load", fullConfigJson, ct);
 
+    public async Task<AdaptResult> AdaptCaddyfileAsync(string caddyfile, CancellationToken ct = default)
+    {
+        if (_simulateDisconnected) return AdaptResult.Fail("Simulated disconnect.");
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "adapt")
+            {
+                Content = new StringContent(caddyfile, System.Text.Encoding.UTF8, "text/caddyfile"),
+            };
+            using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+            var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            return AdaptParser.Parse(resp.IsSuccessStatusCode, body);
+        }
+        catch (Exception ex)
+        {
+            return AdaptResult.Fail(ex.Message);
+        }
+    }
+
     private async Task<WriteResult> SendWriteAsync(HttpMethod method, string relPath, string? json, CancellationToken ct)
         => (await SendWriteStatusAsync(method, relPath, json, ct).ConfigureAwait(false)).Result;
 

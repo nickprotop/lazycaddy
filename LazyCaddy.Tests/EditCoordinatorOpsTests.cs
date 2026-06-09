@@ -48,6 +48,7 @@ public class EditCoordinatorOpsTests : IDisposable
         public Task<WriteResult> PatchConfigAsync(string path, string json, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<WriteResult> PutConfigAsync(string path, string json, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<WriteResult> LoadConfigAsync(string fullConfigJson, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<AdaptResult> AdaptCaddyfileAsync(string caddyfile, CancellationToken ct = default) => throw new NotImplementedException();
     }
 
     private (EditCoordinator coord, FakeAdmin fake, SnapshotStore store) NewCoordinator(bool readOnly = false)
