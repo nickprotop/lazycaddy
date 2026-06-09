@@ -234,7 +234,7 @@ public sealed class RouteEditModal : ModalBase<bool>
         }
         else
         {
-            SetStatus($"[{UIConstants.Bad.ToMarkup()}]Applied {res.Applied} of {res.Total}; failed on {Escape(res.FailedLabel ?? "?")}: {Escape(res.Error ?? "write failed")}[/]");
+            SetStatus($"[{UIConstants.Bad.ToMarkup()}]Applied {res.Applied} of {res.Total}; failed on {Escape(res.FailedLabel ?? "?")}: {Escape(CaddyErrorFormatter.Format(res.Error))}[/]");
         }
     }
 

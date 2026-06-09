@@ -153,7 +153,7 @@ public sealed class AdaptView
         if (res.Success)
             SetStatus($"[{UIConstants.Good.ToMarkup()}]✓ Loaded adapted config (snapshot taken first).[/]");
         else
-            ShowError(res.Error ?? "Load failed.");
+            ShowError(res.FriendlyError);
     }
 
     public void Update(DashboardState state)

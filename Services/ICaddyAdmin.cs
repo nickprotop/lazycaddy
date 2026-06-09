@@ -64,4 +64,7 @@ public sealed record WriteResult(bool Success, string? Error)
 {
     public static WriteResult Ok => new(true, null);
     public static WriteResult Fail(string error) => new(false, error);
+
+    /// <summary>Caddy's error body condensed to a readable, plain-English line (for UI display).</summary>
+    public string FriendlyError => CaddyErrorFormatter.Format(Error);
 }

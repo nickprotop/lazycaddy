@@ -136,7 +136,7 @@ public sealed class HandlersModal : ModalBase<bool>
         var res = await _editor.ApplyAsync(
             (admin, ct) => admin.PostConfigAsync(arrayPath, json, ct),
             $"add {type} handler to {_route.HostOrMatch}");
-        if (!res.Success) { SetError(res.Error ?? "Add failed."); return; }
+        if (!res.Success) { SetError(res.FriendlyError); return; }
 
         // The new handler is minimal — close and let the caller open RouteEditModal to configure it.
         _addedHandler = true;
@@ -155,7 +155,7 @@ public sealed class HandlersModal : ModalBase<bool>
         var res = await _editor.ApplyAsync(
             (admin, ct) => admin.DeleteConfigAsync(h.ConfigPath, ct),
             $"delete {h.Type} handler from {_route.HostOrMatch}");
-        if (!res.Success) { SetError(res.Error ?? "Delete failed."); return; }
+        if (!res.Success) { SetError(res.FriendlyError); return; }
 
         // Re-fetch the route node so indices/list reflect the removal, then refresh.
         try { _routeJson = await _editor.GetConfigNodeAsync(_route.ConfigPath); }

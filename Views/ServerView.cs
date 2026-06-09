@@ -530,7 +530,7 @@ public sealed class ServerView
                     // _dirty against the now-partially-committed state.
                     CommitLoadedFor(changes.Take(applied));
                     _dirty = HasUnsavedChanges();
-                    SetStatus($"[{UIConstants.Bad.ToMarkup()}]{Escape(r.Error ?? "write failed")}[/]");
+                    SetStatus($"[{UIConstants.Bad.ToMarkup()}]{Escape(CaddyErrorFormatter.Format(r.Error))}[/]");
                     return; // prior writes stay applied
                 }
                 applied++;

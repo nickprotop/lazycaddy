@@ -163,7 +163,7 @@ public sealed class RawConfigView
         }
         else
         {
-            SetStatus($"[{UIConstants.Bad.ToMarkup()}]{(result.Error ?? "write failed").Replace("[", "[[").Replace("]", "]]")}[/]");
+            SetStatus($"[{UIConstants.Bad.ToMarkup()}]{result.FriendlyError.Replace("[", "[[").Replace("]", "]]")}[/]");
         }
     }
 
