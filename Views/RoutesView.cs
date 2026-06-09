@@ -84,7 +84,10 @@ public sealed class RoutesView
     /// Only acts when this view's table currently has focus.</summary>
     public bool TryHandleKey(ConsoleKeyInfo key)
     {
-        if (_table is null || !_table.HasFocus) return false;
+        if (_table is null) return false;
+        DebugLog.Line($"RoutesView.TryHandleKey key={key.Key} tableHasFocus={_table.HasFocus} " +
+            $"selRow={_table.SelectedRowIndex} selTag={_table.SelectedRow?.Tag?.GetType().Name ?? "null"}");
+        if (!_table.HasFocus) return false;
         var tag = _table.SelectedRow?.Tag;
 
         if (tag is Route route)
@@ -156,6 +159,7 @@ public sealed class RoutesView
     private async Task OnActivateAsync()
     {
         var tag = _table?.SelectedRow?.Tag;
+        DebugLog.Line($"RoutesView.OnActivate selTag={tag?.GetType().Name ?? "null"}");
         if (tag is Route route) ToggleExpand(route);
         else if (tag is HandlerDescriptor hd) await EditHandlerAsync(hd);
     }
@@ -166,6 +170,7 @@ public sealed class RoutesView
     {
         if (!_expandedRoutes.Remove(route.ConfigPath))
             _expandedRoutes.Add(route.ConfigPath);
+        DebugLog.Line($"RoutesView.ToggleExpand {route.ConfigPath} → expanded={_expandedRoutes.Contains(route.ConfigPath)}");
         RebuildRows();
         SelectRouteRow(route.ConfigPath);
     }
