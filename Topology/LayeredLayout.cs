@@ -15,6 +15,7 @@ public static class LayeredLayout
         NodeKind.Matcher => 1,
         NodeKind.Middleware => 2,
         NodeKind.ReverseProxy => 3,
+        NodeKind.Terminal => 3,   // a terminal handler ends the chain in the same column as a proxy
         NodeKind.Upstream => 4,
         _ => 5
     };

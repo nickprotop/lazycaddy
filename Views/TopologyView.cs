@@ -33,7 +33,7 @@ public sealed class TopologyView
         var muted = UIConstants.MutedText.ToMarkup();
         panel.AddControl(Controls.Markup()
             .AddLine($"[bold {accent}]Topology[/]")
-            .AddLine($"[{muted}]host → reverse_proxy → upstream. Arrows: select/scroll. Health-colored.[/]")
+            .AddLine($"[{muted}]host → handler chain → upstream. Arrows: select/scroll. Health-colored.[/]")
             .AddEmptyLine().Build());
 
         // AutoSize makes CanvasWidth/Height track the available content area, so the
