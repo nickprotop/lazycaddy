@@ -91,7 +91,7 @@ public sealed class TopologyGraph
                     var rpId = $"rp:{r}:{h}";
                     nodes.Add(new TopoNode(rpId, NodeKind.ReverseProxy, "reverse_proxy", NodeHealth.Unknown) { Lane = r, Column = col });
                     edges.Add(new TopoEdge(prevId, rpId));
-                    AddUpstreams(rpId, route, col + 1, upstreamNodeIds, upstreamHealth, nodes, edges);
+                    AddUpstreams(rpId, route, upstreamNodeIds, upstreamHealth, nodes, edges);
                     prevId = rpId;
                     sawTerminal = true;
                 }
@@ -115,12 +115,13 @@ public sealed class TopologyGraph
                 var rpId = $"rp:{r}:fallback";
                 nodes.Add(new TopoNode(rpId, NodeKind.ReverseProxy, "reverse_proxy", NodeHealth.Unknown) { Lane = r, Column = col });
                 edges.Add(new TopoEdge(prevId, rpId));
-                AddUpstreams(rpId, route, col + 1, upstreamNodeIds, upstreamHealth, nodes, edges);
+                AddUpstreams(rpId, route, upstreamNodeIds, upstreamHealth, nodes, edges);
             }
 
             r++;
         }
 
+        PlaceUpstreamsInDedicatedColumn(nodes);
         return new TopologyGraph(nodes, edges);
     }
 
@@ -132,11 +133,13 @@ public sealed class TopologyGraph
         catch { return Array.Empty<HandlerDescriptor>(); }
     }
 
-    // Attach the route's upstream addresses (deduped by dial) to a reverse_proxy node, placing
-    // each upstream in `column` (one past its proxy). A shared upstream referenced by several
-    // proxies takes the rightmost column among them so it sits clear of every proxy.
+    // Attach the route's upstream addresses (deduped by dial) to a reverse_proxy node. The actual
+    // upstream COLUMN is assigned in a final pass (PlaceUpstreamsInDedicatedColumn) — here we only
+    // create the node and the proxy→upstream edge. Keeping every upstream in one dedicated column
+    // (right of the longest chain) means upstreams never collide with handler nodes of a long
+    // route's chain, regardless of how the columns line up.
     private static void AddUpstreams(
-        string rpId, Route route, int column,
+        string rpId, Route route,
         Dictionary<string, string> upstreamNodeIds,
         Dictionary<string, NodeHealth> upstreamHealth,
         List<TopoNode> nodes, List<TopoEdge> edges)
@@ -148,16 +151,22 @@ public sealed class TopologyGraph
                 upId = $"up:{dial}";
                 upstreamNodeIds[dial] = upId;
                 var health = upstreamHealth.TryGetValue(dial, out var hv) ? hv : NodeHealth.Unknown;
-                nodes.Add(new TopoNode(upId, NodeKind.Upstream, dial, health) { Column = column });
-            }
-            else
-            {
-                // Already created by an earlier proxy — keep it in the rightmost column needed.
-                int idx = nodes.FindIndex(n => n.Id == upId);
-                if (idx >= 0 && column > nodes[idx].Column)
-                    nodes[idx] = nodes[idx] with { Column = column };
+                nodes.Add(new TopoNode(upId, NodeKind.Upstream, dial, health));
             }
             edges.Add(new TopoEdge(rpId, upId));
         }
+    }
+
+    // Put every upstream in ONE dedicated column, just right of the longest handler chain, so an
+    // upstream never lands in a column occupied by some other route's middleware/terminal node.
+    private static void PlaceUpstreamsInDedicatedColumn(List<TopoNode> nodes)
+    {
+        int maxChainCol = 0;
+        foreach (var n in nodes)
+            if (n.Kind != NodeKind.Upstream && n.Column > maxChainCol) maxChainCol = n.Column;
+        int upCol = maxChainCol + 1;
+        for (int i = 0; i < nodes.Count; i++)
+            if (nodes[i].Kind == NodeKind.Upstream)
+                nodes[i] = nodes[i] with { Column = upCol };
     }
 }

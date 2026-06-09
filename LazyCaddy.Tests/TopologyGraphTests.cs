@@ -153,6 +153,29 @@ public class TopologyGraphTests
     }
 
     [Fact]
+    public void Build_UpstreamColumn_IsRightOfEveryHandlerNode()
+    {
+        // Regression: a shared upstream fed by a short-chain proxy must NOT land in a column
+        // occupied by a different route's long chain (it used to overlap a middleware box).
+        // Every upstream sits in one dedicated column, strictly right of all handler nodes.
+        var longChain = """
+        {"handle":[
+            {"handler":"authentication","providers":{"http_basic":{}}},
+            {"handler":"headers","response":{"set":{"X-A":["b"]}}},
+            {"handler":"rewrite","strip_path_prefix":"/x"},
+            {"handler":"reverse_proxy","upstreams":[{"dial":"127.0.0.1:8090"}]}
+        ]}
+        """;
+        var g = TopologyGraph.Build(Snap(
+            new Route("long", "127.0.0.1:8090", true, "active", longChain, "p0"),
+            new Route("short", "127.0.0.1:8090", true, "active", ProxyJson("127.0.0.1:8090"), "p1")));
+
+        int maxHandlerCol = g.Nodes.Where(n => n.Kind != NodeKind.Upstream).Max(n => n.Column);
+        foreach (var up in g.Nodes.Where(n => n.Kind == NodeKind.Upstream))
+            Assert.True(up.Column > maxHandlerCol, "upstream must be right of every handler node");
+    }
+
+    [Fact]
     public void Build_MiddlewareNodesHaveUnknownHealth()
     {
         var json = """

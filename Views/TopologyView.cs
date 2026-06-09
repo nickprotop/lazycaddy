@@ -1,7 +1,9 @@
 // -----------------------------------------------------------------------
-// LazyCaddy - interactive topology view. Owns a CanvasControl, builds the
-// graph from the latest snapshot, lays it out, and renders. Arrow keys move
-// the selection between nodes; the canvas redraws on poll and on input.
+// LazyCaddy - topology view. Builds the graph from the latest snapshot, lays
+// it out, and renders it onto a CanvasControl sized to the FULL graph extent.
+// The canvas lives inside a ScrollablePanelControl, so panning (arrows / PgUp/
+// PgDn / Home / End / scrollbars / mouse wheel) is handled by the framework —
+// the renderer always draws at absolute coordinates (no manual scroll offset).
 // -----------------------------------------------------------------------
 
 using SharpConsoleUI;
@@ -17,15 +19,11 @@ namespace LazyCaddy.Views;
 public sealed class TopologyView
 {
     private const int BoxW = 22, BoxH = 3, HGap = 6, VGap = 1;
+    private const int Pad = 2; // breathing room around the graph in the canvas buffer
 
     private CanvasControl? _canvas;
     private IReadOnlyList<PlacedNode> _placed = System.Array.Empty<PlacedNode>();
     private IReadOnlyList<TopoEdge> _edges = System.Array.Empty<TopoEdge>();
-    private string? _selectedId;
-    // _scrollX is reserved for future horizontal panning; arrows currently drive
-    // selection (left/right) and vertical scroll (up/down). Initialized explicitly
-    // so it is treated as assigned (no CS0649) until horizontal panning lands.
-    private int _scrollX = 0, _scrollY;
 
     public void Build(ScrollablePanelControl panel)
     {
@@ -33,25 +31,39 @@ public sealed class TopologyView
         var muted = UIConstants.MutedText.ToMarkup();
         panel.AddControl(Controls.Markup()
             .AddLine($"[bold {accent}]Topology[/]")
-            .AddLine($"[{muted}]host → handler chain → upstream. Arrows: select/scroll. Health-colored.[/]")
+            .AddLine($"[{muted}]host → handler chain → upstream. Arrows / PgUp·PgDn / Home·End scroll. Health-colored.[/]")
             .AddEmptyLine().Build());
 
-        // AutoSize makes CanvasWidth/Height track the available content area, so the
-        // whole graph (incl. the rightmost upstream column) is in bounds AND the canvas
-        // re-sizes when the terminal resizes. Stretch horizontally to fill the panel.
+        // Explicitly-sized canvas (AutoSize OFF): its size is set each Update to the full graph
+        // extent, so it can be larger than the viewport. Wrapping it in a ScrollablePanel with both
+        // scroll modes lets the framework pan/clip — long handler chains and the rightmost upstream
+        // column are reachable by scrolling instead of overrunning the border.
+        // Disabled = not focusable. The canvas is a pure rendered diagram (no interaction), so it
+        // must not grab key focus — otherwise the ScrollablePanel would delegate arrow/PgUp/End
+        // keys to the canvas instead of scrolling. With it non-focusable, focus rests on the
+        // scroller, which handles all scrolling. (Disabling doesn't affect the canvas paint.)
         _canvas = Controls.Canvas()
-            .AutoSize(true)
-            .WithAlignment(HorizontalAlignment.Stretch)
-            .WithVerticalAlignment(VerticalAlignment.Fill)
+            .AutoSize(false)
+            .WithSize(40, 10) // placeholder; resized on first Update from the layout extent
+            .Enabled(false)
             .WithName("topologyCanvas")
             .Build();
 
         _canvas.Paint += (_, e) =>
             TopologyRenderer.Render(e.Graphics, e.CanvasWidth, e.CanvasHeight,
-                _placed, _edges, _selectedId, _scrollX, _scrollY);
+                _placed, _edges, selectedId: null, scrollX: 0, scrollY: 0);
 
-        _canvas.CanvasKeyPressed += (_, key) => OnKey(key);
-        panel.AddControl(_canvas);
+        var scroller = Controls.ScrollablePanel()
+            .WithHorizontalScroll(ScrollMode.Scroll)
+            .WithVerticalScroll(ScrollMode.Scroll)
+            .WithScrollbar(true)
+            .WithVerticalAlignment(VerticalAlignment.Fill)
+            .WithAlignment(HorizontalAlignment.Stretch)
+            .WithName("topologyScroller")
+            .AddControl(_canvas)
+            .Build();
+
+        panel.AddControl(scroller);
     }
 
     public void Update(DashboardState state)
@@ -62,28 +74,27 @@ public sealed class TopologyView
         var graph = TopologyGraph.Build(snap);
         _placed = LayeredLayout.Arrange(graph, BoxW, BoxH, HGap, VGap);
         _edges = graph.Edges;
-        _selectedId ??= _placed.FirstOrDefault()?.Node.Id;
+
+        // Size the canvas buffer to the full graph so nothing is clipped at the source; the
+        // ScrollablePanel provides the viewport and scrolling.
+        var (w, h) = Extent(_placed);
+        _canvas.CanvasWidth = w;
+        _canvas.CanvasHeight = h;
         _canvas.Invalidate(); // request repaint on the UI thread
     }
 
     /// <summary>Redraw on terminal resize (driver ScreenResized). Call on the UI thread.</summary>
     public void HandleResize() => _canvas?.Invalidate();
 
-    private void OnKey(System.ConsoleKeyInfo key)
+    // The buffer size needed to hold every node: max right/bottom edge, plus a little padding.
+    private static (int W, int H) Extent(IReadOnlyList<PlacedNode> placed)
     {
-        if (_placed.Count == 0) return;
-        var ordered = _placed.OrderBy(p => p.X).ThenBy(p => p.Y).Select(p => p.Node.Id).ToList();
-        int idx = _selectedId is null ? 0 : System.Math.Max(0, ordered.IndexOf(_selectedId));
-
-        switch (key.Key)
+        int maxX = 0, maxY = 0;
+        foreach (var p in placed)
         {
-            case System.ConsoleKey.RightArrow: idx = System.Math.Min(ordered.Count - 1, idx + 1); break;
-            case System.ConsoleKey.LeftArrow:  idx = System.Math.Max(0, idx - 1); break;
-            case System.ConsoleKey.DownArrow:  _scrollY += 1; break;
-            case System.ConsoleKey.UpArrow:    _scrollY = System.Math.Max(0, _scrollY - 1); break;
-            default: return;
+            if (p.X + p.Width > maxX) maxX = p.X + p.Width;
+            if (p.Y + p.Height > maxY) maxY = p.Y + p.Height;
         }
-        _selectedId = ordered[idx];
-        _canvas?.Invalidate();
+        return (System.Math.Max(1, maxX + Pad), System.Math.Max(1, maxY + Pad));
     }
 }
