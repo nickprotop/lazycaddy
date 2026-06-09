@@ -1,6 +1,10 @@
 // -----------------------------------------------------------------------
-// LazyCaddy - Routes: one row per route (host/match -> upstream). Activating a
-// row opens the route-detail modal with the pretty-printed config.
+// LazyCaddy - Routes: a grouped, expandable table. Each route is a parent row
+// (host/match → upstream); pressing Enter / → expands it to show its handler
+// chain as indented child rows. Route-level actions (new/delete/HTTPS/edit
+// match) act on a selected route row; handler-level actions (edit/add/reorder/
+// delete) act on a selected handler child row. Mirrors the proven cxpost
+// grouped-table pattern (PopulateThreadedList / RebuildThreadedTable).
 // -----------------------------------------------------------------------
 
 using SharpConsoleUI;
@@ -23,6 +27,9 @@ public sealed class RoutesView
 
     private TableControl? _table;
     private ToolbarControl? _toolbar;
+    private readonly HashSet<string> _expandedRoutes = new();   // keyed by route.ConfigPath
+    private CaddySnapshot? _snapshot;                            // cached for toggle-rebuild
+    private bool _isPopulating;                                  // reentrancy guard
 
     public RoutesView(ConsoleWindowSystem windowSystem, EditCoordinator editor)
     {
@@ -30,79 +37,430 @@ public sealed class RoutesView
         _editor = editor;
     }
 
+    // ── Public surface DashboardShell depends on (signatures must not change) ──
+
+    public void Build(ScrollablePanelControl panel)
+    {
+        var accent = UIConstants.Accent.ToMarkup();
+        var muted = UIConstants.MutedText.ToMarkup();
+
+        panel.AddControl(Controls.Markup()
+            .AddLine($"[bold {accent}]Routes[/]")
+            .AddLine($"[{muted}]Public host → upstream. Enter/→ expands a route's handler chain.[/]")
+            .AddEmptyLine()
+            .Build());
+
+        _toolbar = ViewToolbar.Create("routesToolbar");
+        panel.AddControl(_toolbar);
+
+        // Grouped rows don't compose with the table's built-in sort/filter, so those
+        // are intentionally dropped — routes stay in config (handler-execution) order.
+        _table = Controls.Table()
+            .AddColumn("Host / Match", TextJustification.Left)
+            .AddColumn("Upstream", TextJustification.Left)
+            .AddColumn("TLS", TextJustification.Center, 6)
+            .AddColumn("Status", TextJustification.Left, 12)
+            .Rounded()
+            .WithBorderColor(UIConstants.MutedText)
+            .Interactive()
+            .WithVerticalScrollbar(ScrollbarVisibility.Auto)
+            .WithName("routesTable")
+            .Build();
+
+        // Adaptive toolbar follows the selected level (route vs handler).
+        _table.SelectedRowChanged += (_, _) => RebuildToolbar();
+        // Enter / double-click: route row → toggle expand; handler row → edit.
+        _table.RowActivatedAsync += async (_, _) => await OnActivateAsync();
+
+        panel.AddControl(_table);
+        RebuildToolbar();
+    }
+
+    public void Update(DashboardState state) => Populate(state.Snapshot);
+
     /// <summary>Handle a view-level edit shortcut. Returns true if consumed.
     /// Only acts when this view's table currently has focus.</summary>
     public bool TryHandleKey(ConsoleKeyInfo key)
     {
         if (_table is null || !_table.HasFocus) return false;
-        switch (key.Key)
+        var tag = _table.SelectedRow?.Tag;
+
+        if (tag is Route route)
         {
-            case ConsoleKey.E:
-                EditRoute();
-                return true;
-            case ConsoleKey.N:
-                NewRoute();
-                return true;
-            case ConsoleKey.D:
-                DeleteSelected();
-                return true;
-            case ConsoleKey.M:
-                ManageHandlers();
-                return true;
-            case ConsoleKey.H:
-                if (Selected is { TlsEnabled: true }) DisableHttps();
-                else EnableHttps();
-                return true;
-            default:
-                return false;
+            switch (key.Key)
+            {
+                case ConsoleKey.Enter:
+                case ConsoleKey.RightArrow:
+                    ToggleExpand(route);
+                    return true;
+                case ConsoleKey.E:
+                    EditMatch(route);
+                    return true;
+                case ConsoleKey.N:
+                    NewRoute();
+                    return true;
+                case ConsoleKey.D:
+                    _ = DeleteRouteAsync(route);
+                    return true;
+                case ConsoleKey.A:
+                    _ = AddHandlerAsync(route);
+                    return true;
+                case ConsoleKey.H:
+                    if (route.TlsEnabled) _ = DisableHttpsAsync(route);
+                    else _ = EnableHttpsAsync(route);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        if (tag is HandlerDescriptor hd)
+        {
+            switch (key.Key)
+            {
+                case ConsoleKey.Enter:
+                    _ = EditHandlerAsync(hd);
+                    return true;
+                case ConsoleKey.D:
+                    _ = DeleteHandlerAsync(hd);
+                    return true;
+                case ConsoleKey.A:
+                    if (ParentRouteOf(hd) is { } parent) _ = AddHandlerAsync(parent);
+                    return true;
+                case ConsoleKey.Add:
+                case ConsoleKey.OemPlus:
+                    _ = ReorderAsync(hd, +1);
+                    return true;
+                case ConsoleKey.Subtract:
+                case ConsoleKey.OemMinus:
+                    _ = ReorderAsync(hd, -1);
+                    return true;
+                case ConsoleKey.LeftArrow:
+                    if (ParentRouteOf(hd) is { } p) Collapse(p);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        return false;
+    }
+
+    // ── Activation (Enter / double-click) ──
+
+    private async Task OnActivateAsync()
+    {
+        var tag = _table?.SelectedRow?.Tag;
+        if (tag is Route route) ToggleExpand(route);
+        else if (tag is HandlerDescriptor hd) await EditHandlerAsync(hd);
+    }
+
+    // ── Expand / collapse ──
+
+    private void ToggleExpand(Route route)
+    {
+        if (!_expandedRoutes.Remove(route.ConfigPath))
+            _expandedRoutes.Add(route.ConfigPath);
+        RebuildRows();
+        SelectRouteRow(route.ConfigPath);
+    }
+
+    private void Collapse(Route route)
+    {
+        if (_expandedRoutes.Remove(route.ConfigPath))
+        {
+            RebuildRows();
+            SelectRouteRow(route.ConfigPath);
         }
     }
 
-    // ── Shared action handlers (invoked by both keys and toolbar buttons) ──
-    // Each reads the currently-selected route at call time and no-ops if none.
+    // ── Populate / rebuild (cxpost grouped-table pattern) ──
 
-    private Route? Selected => _table?.SelectedRow?.Tag as Route;
-
-    private void EditRoute()
+    // PopulateThreadedList analog: fan a fresh snapshot into grouped rows, preserving
+    // selection identity (route/handler ConfigPath) and scroll across the refresh.
+    private void Populate(CaddySnapshot? snap)
     {
-        if (Selected is { } route) _ = RouteEditModal.ShowAsync(_windowSystem, route, _editor);
+        if (snap is null || _table is null || _isPopulating) return;
+        _isPopulating = true;
+        try
+        {
+            _snapshot = snap;
+            // Prune expanded IDs for routes that no longer exist.
+            _expandedRoutes.IntersectWith(snap.Routes.Select(r => r.ConfigPath));
+            BuildRowsCore(snap.Routes);
+        }
+        finally { _isPopulating = false; }
+        RebuildToolbar();
+    }
+
+    // RebuildThreadedTable analog: re-lay the rows from the cached snapshot (no new
+    // data) after an expand/collapse toggle.
+    private void RebuildRows()
+    {
+        if (_snapshot is null || _table is null || _isPopulating) return;
+        _isPopulating = true;
+        try { BuildRowsCore(_snapshot.Routes); }
+        finally { _isPopulating = false; }
+        RebuildToolbar();
+    }
+
+    // Shared core: capture selection + scroll, clear, re-add route rows (with handler
+    // child rows for expanded routes), then restore selection identity + scroll.
+    private void BuildRowsCore(IReadOnlyList<Route> routes)
+    {
+        if (_table is null) return;
+
+        // Capture selection identity by Tag (ConfigPath) and the scroll position.
+        string? selPath = _table.SelectedRow?.Tag switch
+        {
+            Route r => r.ConfigPath,
+            HandlerDescriptor hd => hd.ConfigPath,
+            _ => null,
+        };
+        var savedScroll = _table.ScrollOffset;
+
+        _table.ClearRows();
+        foreach (var route in routes)
+        {
+            _table.AddRow(BuildRouteRow(route));
+            if (_expandedRoutes.Contains(route.ConfigPath))
+            {
+                foreach (var hd in HandlersOf(route))
+                    _table.AddRow(BuildHandlerRow(hd));
+            }
+        }
+
+        // Restore selection by matching Tag identity.
+        if (selPath is not null)
+        {
+            for (int i = 0; i < _table.RowCount; i++)
+            {
+                var t = _table.GetRow(i).Tag;
+                var p = t switch { Route r => r.ConfigPath, HandlerDescriptor hd => hd.ConfigPath, _ => null };
+                if (p == selPath) { _table.SelectedRowIndex = i; break; }
+            }
+        }
+        if (_table.RowCount > 0)
+        {
+            if (_table.SelectedRowIndex < 0 || _table.SelectedRowIndex >= _table.RowCount)
+                _table.SelectedRowIndex = 0;
+            _table.ScrollOffset = savedScroll;
+        }
+    }
+
+    // The non-subroute handlers of a route (subroute containers are skipped as rows;
+    // their children follow with composed ConfigPaths).
+    private IReadOnlyList<HandlerDescriptor> HandlersOf(Route route)
+    {
+        try
+        {
+            return RouteModel.ParseHandlers(route.RawConfigJson, route.ConfigPath)
+                .Where(h => h.Type != "subroute").ToList();
+        }
+        catch { return Array.Empty<HandlerDescriptor>(); }
+    }
+
+    // ── Row builders ──
+
+    private TableRow BuildRouteRow(Route r)
+    {
+        var expanded = _expandedRoutes.Contains(r.ConfigPath);
+        var accent = UIConstants.Accent.ToMarkup();
+        string arrow;
+        if (expanded)
+            arrow = $"[{accent}]▾[/]";
+        else
+        {
+            var count = HandlersOf(r).Count;
+            arrow = count > 0 ? $"[{accent}]▸{count}[/]" : $"[{accent}]▸[/]";
+        }
+
+        var tls = r.TlsEnabled
+            ? $"[{UIConstants.Good.ToMarkup()}]✓[/]"
+            : $"[{UIConstants.MutedText.ToMarkup()}]—[/]";
+
+        return new TableRow(
+            $"{arrow} {Escape(r.HostOrMatch)}",
+            Escape(r.Upstream),
+            tls,
+            UIConstants.StatusMarkup(r.Status))
+        {
+            Tag = r,
+        };
+    }
+
+    private TableRow BuildHandlerRow(HandlerDescriptor hd)
+    {
+        var muted = UIConstants.MutedText.ToMarkup();
+        return new TableRow(
+            $"    [{muted}]{Escape(hd.Type)}[/]",
+            Escape(hd.Summary),
+            "",
+            "")
+        {
+            Tag = hd,
+        };
+    }
+
+    // ── Toolbar (adaptive to selected level) ──
+
+    private void RebuildToolbar()
+    {
+        if (_toolbar is null) return;
+        var tag = _table?.SelectedRow?.Tag;
+
+        List<ToolbarAction?> actions;
+        if (tag is HandlerDescriptor hd)
+        {
+            actions = new List<ToolbarAction?>
+            {
+                new(ViewToolbar.Caption("✎", "Edit", "↵"), () => _ = EditHandlerAsync(hd)),
+                new(ViewToolbar.Caption("⊕", "Add", "a"), () => { if (ParentRouteOf(hd) is { } p) _ = AddHandlerAsync(p); }),
+                null,
+                new(ViewToolbar.Caption("▲", "Up", "-"), () => _ = ReorderAsync(hd, -1)),
+                new(ViewToolbar.Caption("▼", "Down", "+"), () => _ = ReorderAsync(hd, +1)),
+                null,
+                new(ViewToolbar.Caption("✕", "Delete", "d"), () => _ = DeleteHandlerAsync(hd)),
+            };
+        }
+        else
+        {
+            var route = tag as Route;
+            actions = new List<ToolbarAction?>
+            {
+                new(ViewToolbar.Caption("⊕", "New", "n"), NewRoute),
+            };
+            if (route is not null)
+            {
+                actions.Add(new(ViewToolbar.Caption("✎", "Edit match", "e"), () => EditMatch(route)));
+                actions.Add(new(ViewToolbar.Caption("⚙", "Add handler", "a"), () => _ = AddHandlerAsync(route)));
+                if (route.TlsEnabled)
+                    actions.Add(new(ViewToolbar.Caption("🔓", "Disable HTTPS", "h"), () => _ = DisableHttpsAsync(route)));
+                else
+                    actions.Add(new(ViewToolbar.Caption("🔒", "Enable HTTPS", "h"), () => _ = EnableHttpsAsync(route)));
+                actions.Add(null);
+                actions.Add(new(ViewToolbar.Caption("✕", "Delete", "d"), () => _ = DeleteRouteAsync(route)));
+            }
+        }
+        ViewToolbar.Rebuild(_toolbar, actions);
+    }
+
+    // ── Selection helpers ──
+
+    private void SelectRouteRow(string configPath)
+    {
+        if (_table is null) return;
+        for (int i = 0; i < _table.RowCount; i++)
+        {
+            if (_table.GetRow(i).Tag is Route r && r.ConfigPath == configPath)
+            {
+                _table.SelectedRowIndex = i;
+                return;
+            }
+        }
+    }
+
+    // Find the route whose ConfigPath prefixes this handler's path.
+    private Route? ParentRouteOf(HandlerDescriptor hd)
+    {
+        if (_snapshot is null) return null;
+        return _snapshot.Routes
+            .Where(r => !string.IsNullOrEmpty(r.ConfigPath) && hd.ConfigPath.StartsWith(r.ConfigPath + "/", StringComparison.Ordinal))
+            .OrderByDescending(r => r.ConfigPath.Length)   // most-specific prefix wins
+            .FirstOrDefault();
+    }
+
+    // ── Handler-level actions ──
+
+    private async Task EditHandlerAsync(HandlerDescriptor hd)
+    {
+        if (ParentRouteOf(hd) is { } route)
+            await SingleHandlerEditModal.ShowAsync(_windowSystem, route, hd, _editor);
+    }
+
+    private async Task DeleteHandlerAsync(HandlerDescriptor hd)
+    {
+        if (string.IsNullOrEmpty(hd.ConfigPath)) return;
+        if (!await ConfirmDeleteDialog.ShowAsync(_windowSystem, $"handler {hd.Type}")) return;
+        await _editor.ApplyAsync(
+            (admin, ct) => admin.DeleteConfigAsync(hd.ConfigPath, ct),
+            $"delete {hd.Type} handler");
+    }
+
+    // Reorder a handler within its handle[] array. The array path is the handler's
+    // ConfigPath minus the trailing /{N}; the index is that N.
+    private async Task ReorderAsync(HandlerDescriptor hd, int delta)
+    {
+        var slash = hd.ConfigPath.LastIndexOf('/');
+        if (slash <= 0) return;
+        var arrayPath = hd.ConfigPath[..slash];
+        if (!int.TryParse(hd.ConfigPath[(slash + 1)..], out var index)) return;
+
+        string arrayJson;
+        try { arrayJson = await _editor.GetConfigNodeAsync(arrayPath); }
+        catch { return; }
+
+        var newJson = HandlerReorder.Swap(arrayJson, index, delta);
+        if (newJson == arrayJson) return; // out of bounds / no-op
+
+        await _editor.ApplyAsync(
+            (admin, ct) => admin.PatchConfigAsync(arrayPath, newJson, ct),
+            "reorder handlers");
+    }
+
+    // Append a minimal handler of a chosen type to the route's primary handle[] array.
+    private async Task AddHandlerAsync(Route route)
+    {
+        var type = await HandlerTypePicker.ShowAsync(_windowSystem);
+        if (string.IsNullOrEmpty(type)) return;
+
+        var arr = ResolvePrimaryHandlerArray(route, route.RawConfigJson);
+        var json = NewRouteSkeleton.MinimalHandler(type);
+        var res = await _editor.ApplyAsync(
+            (admin, ct) => admin.PostConfigAsync(arr, json, ct),
+            $"add {type} handler");
+
+        // Expand the route so the new handler shows on the next poll.
+        if (res.Success) _expandedRoutes.Add(route.ConfigPath);
+    }
+
+    // The config path of the route's primary handle[] array — derived from the first
+    // non-subroute handler's path, else the conventional {route}/handle.
+    private static string ResolvePrimaryHandlerArray(Route route, string routeJson)
+    {
+        try
+        {
+            var first = RouteModel.ParseHandlers(routeJson, route.ConfigPath).FirstOrDefault(d => d.Type != "subroute");
+            if (first is not null)
+            {
+                var i = first.ConfigPath.LastIndexOf('/');
+                if (i > 0) return first.ConfigPath[..i];
+            }
+        }
+        catch { }
+        return $"{route.ConfigPath}/handle";
+    }
+
+    // ── Route-level actions (preserved from the flat view) ──
+
+    private void EditMatch(Route route)
+    {
+        _ = MatchEditModal.ShowAsync(_windowSystem, route, _editor);
     }
 
     private void NewRoute()
     {
-        var server = Selected is { } route ? ServerPathFor(route) : "apps/http/servers/srv0";
+        var selected = _table?.SelectedRow?.Tag as Route;
+        var server = selected is { } route ? ServerPathFor(route) : "apps/http/servers/srv0";
         _ = NewRouteWizard.ShowAsync(_windowSystem, _editor, server);
     }
 
-    private void DeleteSelected()
-    {
-        if (Selected is { } route) _ = DeleteRouteAsync(route);
-    }
-
-    // Open the handler-chain manager for the selected route. If the user adds a handler there,
-    // the modal closes and we open the route editor so the new (minimal) handler gets configured.
-    private void ManageHandlers()
-    {
-        if (Selected is { } route) _ = ManageHandlersAsync(route);
-    }
-
-    private async Task ManageHandlersAsync(Route route)
-    {
-        var added = await HandlersModal.ShowAsync(_windowSystem, route, _editor);
-        if (added)
-            await RouteEditModal.ShowAsync(_windowSystem, route, _editor);
-    }
-
-    // Enable automatic HTTPS for the selected route's host by adding it to TLS
-    // automation as a managed subject (Caddy then provisions + renews its cert).
-    // TLS in Caddy is per-hostname (tls.automation), not a per-route flag.
-    private void EnableHttps()
-    {
-        if (Selected is { } route && !route.TlsEnabled) _ = EnableHttpsAsync(route);
-    }
-
+    // Enable automatic HTTPS for the route's host by adding it to TLS automation as a
+    // managed subject (Caddy then provisions + renews its cert). TLS in Caddy is
+    // per-hostname (tls.automation), not a per-route flag.
     private async Task EnableHttpsAsync(Route route)
     {
+        if (route.TlsEnabled) return;
         // Take just the hostnames from the matcher summary (drop any path part).
         var hosts = route.HostOrMatch
             .Split(' ')[0]
@@ -121,15 +479,11 @@ public sealed class RoutesView
             $"enable HTTPS for {string.Join(", ", hosts)}");
     }
 
-    // Stop managing TLS for the selected route's host: remove it from its automation
-    // policy's subjects (or delete the policy if it was the only subject).
-    private void DisableHttps()
-    {
-        if (Selected is { } route && route.TlsEnabled) _ = DisableHttpsAsync(route);
-    }
-
+    // Stop managing TLS for the route's host: remove it from its automation policy's
+    // subjects (or delete the policy if it was the only subject).
     private async Task DisableHttpsAsync(Route route)
     {
+        if (!route.TlsEnabled) return;
         var host = route.HostOrMatch.Split(' ')[0]
             .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .FirstOrDefault();
@@ -196,111 +550,6 @@ public sealed class RoutesView
         await _editor.ApplyAsync(
             (admin, ct) => admin.DeleteConfigAsync(route.ConfigPath, ct),
             $"delete route {route.HostOrMatch}");
-    }
-
-    public void Build(ScrollablePanelControl panel)
-    {
-        var accent = UIConstants.Accent.ToMarkup();
-        var muted = UIConstants.MutedText.ToMarkup();
-
-        panel.AddControl(Controls.Markup()
-            .AddLine($"[bold {accent}]Routes[/]")
-            .AddLine($"[{muted}]Public host → upstream. Select a row to edit.[/]")
-            .AddEmptyLine()
-            .Build());
-
-        _toolbar = ViewToolbar.Create("routesToolbar");
-        panel.AddControl(_toolbar);
-
-        _table = Controls.Table()
-            .AddColumn("Host / Match", TextJustification.Left)
-            .AddColumn("Upstream", TextJustification.Left)
-            .AddColumn("TLS", TextJustification.Center, 6)
-            .AddColumn("Status", TextJustification.Left, 12)
-            .Rounded()
-            .WithBorderColor(UIConstants.MutedText)
-            .Interactive()
-            .WithSorting()
-            .WithFiltering()
-            .WithVerticalScrollbar(ScrollbarVisibility.Auto)
-            .WithName("routesTable")
-            .Build();
-
-        // Async activation handler: with InstallSynchronizationContext on, execution
-        // resumes on the UI thread after the await, so touching controls is safe.
-        // Resolve the route from the row's Tag (set in Update) rather than the raw
-        // index, so it stays correct under the table's own sorting/filtering.
-        // Enter / double-click on a route row opens the combined edit dialog.
-        _table.RowActivatedAsync += async (sender, rowIndex) =>
-        {
-            if (_table?.SelectedRow?.Tag is Route r)
-                await RouteEditModal.ShowAsync(_windowSystem, r, _editor);
-        };
-
-        // Adaptive toolbar: rebuild when the selection changes so context buttons
-        // (Delete) appear/disappear with a selected row.
-        _table.SelectedRowChanged += (_, _) => RebuildToolbar();
-
-        panel.AddControl(_table);
-        RebuildToolbar();
-    }
-
-    private void RebuildToolbar()
-    {
-        if (_toolbar is null) return;
-        var hasRow = Selected is not null;
-        var actions = new List<ToolbarAction?>
-        {
-            new(ViewToolbar.Caption("✎", "Edit", "e"), EditRoute),
-            new(ViewToolbar.Caption("⊕", "New", "n"), NewRoute),
-        };
-        if (hasRow)
-        {
-            actions.Add(null); // separator
-            actions.Add(new(ViewToolbar.Caption("⚙", "Handlers", "m"), ManageHandlers));
-            // Toggle TLS for the host: Enable when off, Disable when on.
-            if (Selected is { TlsEnabled: true })
-                actions.Add(new(ViewToolbar.Caption("🔓", "Disable HTTPS", "h"), DisableHttps));
-            else
-                actions.Add(new(ViewToolbar.Caption("🔒", "Enable HTTPS", "h"), EnableHttps));
-            actions.Add(new(ViewToolbar.Caption("✕", "Delete", "d"), DeleteSelected));
-        }
-        ViewToolbar.Rebuild(_toolbar, actions);
-    }
-
-    public void Update(DashboardState state)
-    {
-        var snap = state.Snapshot;
-        if (snap is null || _table is null) return;
-
-        // Preserve the selected row across the refresh so adaptive toolbar actions
-        // (Edit/Delete/HTTPS) don't vanish on every poll tick; default to row 0.
-        int prev = _table.SelectedRowIndex;
-        _table.ClearRows();
-        foreach (var r in snap.Routes)
-        {
-            var tls = r.TlsEnabled
-                ? $"[{UIConstants.Good.ToMarkup()}]✓[/]"
-                : $"[{UIConstants.MutedText.ToMarkup()}]—[/]";
-            _table.AddRow(new TableRow(
-                Escape(r.HostOrMatch),
-                Escape(r.Upstream),
-                tls,
-                UIConstants.StatusMarkup(r.Status))
-            {
-                Tag = r,
-            });
-        }
-        RestoreSelection(prev, snap.Routes.Count);
-        RebuildToolbar();
-    }
-
-    // Reselect a row after a data refresh: keep the prior index if still valid,
-    // else select the first row so contextual actions stay available.
-    private void RestoreSelection(int prevIndex, int count)
-    {
-        if (_table is null || count == 0) return;
-        _table.SelectedRowIndex = prevIndex >= 0 && prevIndex < count ? prevIndex : 0;
     }
 
     private static string Escape(string s) => s.Replace("[", "[[").Replace("]", "]]");

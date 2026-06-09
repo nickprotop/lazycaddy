@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------
 // LazyCaddy - guided "new route" wizard: collect a host(+path) matcher and a
-// handler type, create a minimal valid route, then open the consolidated
-// RouteEditModal on the new route so the user fills in details across tabs.
+// handler type, create a minimal valid route, then open the single-handler editor
+// on the new route's primary handler so the user fills in its details.
 // -----------------------------------------------------------------------
 
 using System.Text.Json;
@@ -97,14 +97,10 @@ public sealed class NewRouteWizard : ModalBase<bool>
         }
         catch { newIndex = 0; }
 
-        // Open the consolidated RouteEditModal on the new route WHILE this wizard is still open,
-        // parented to its live Modal — closing the wizard first would orphan the modal on a closed
-        // window. The route already exists, so if the user cancels the modal the minimal-but-valid
-        // route remains.
-        //
-        // RouteEditModal only really needs ConfigPath + RawConfigJson (for tab assembly) and
-        // HostOrMatch (the title). We re-GET the just-created route node for RawConfigJson and
-        // build a minimal Route; Upstream/TlsEnabled/Status are best-effort (unused by the modal).
+        // Open the new route's primary handler in the single-handler editor WHILE this wizard is
+        // still open, parented to its live Modal — closing the wizard first would orphan the modal
+        // on a closed window. The route already exists, so if the user cancels, the minimal-but-valid
+        // route remains (it then appears in the grouped Routes view to expand + edit there).
         var routePath = $"{_serverPath}/routes/{newIndex}";
         string rawJson;
         try { rawJson = await _editor.GetConfigNodeAsync(routePath); }
@@ -116,7 +112,13 @@ public sealed class NewRouteWizard : ModalBase<bool>
             Status: "",
             RawConfigJson: rawJson,
             ConfigPath: routePath);
-        await RouteEditModal.ShowAsync(WindowSystem, newRoute, _editor, Modal);
+
+        // Find the route's first real (non-subroute) handler and edit it directly.
+        HandlerDescriptor? primary = null;
+        try { primary = RouteModel.ParseHandlers(rawJson, routePath).FirstOrDefault(d => d.Type != "subroute"); }
+        catch { /* leave null → just close; the route is in the list to edit */ }
+        if (primary is not null)
+            await SingleHandlerEditModal.ShowAsync(WindowSystem, newRoute, primary, _editor, Modal);
         CloseWithResult(true);
     }
 
