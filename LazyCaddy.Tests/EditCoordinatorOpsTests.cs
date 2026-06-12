@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using LazyCaddy.Configuration;
 using LazyCaddy.Models;
 using LazyCaddy.Services;
@@ -5,38 +6,40 @@ using Xunit;
 
 namespace LazyCaddy.Tests;
 
+/// <summary>
+/// EditCoordinator now applies a route-op batch transactionally: read the current config,
+/// compute the full candidate in-memory (ConfigCandidateBuilder), snapshot the known-good
+/// config, and POST /load the candidate exactly once. Caddy's /load is all-or-nothing, so a
+/// batch either fully lands or fully rolls back — there is no per-op sequencing to assert.
+/// </summary>
 public class EditCoordinatorOpsTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "lazycaddy-ops-" + Guid.NewGuid().ToString("N"));
 
-    /// <summary>Hand-written ICaddyAdmin fake: records ordered (method, path) calls,
-    /// returns scripted results per method (default Ok).</summary>
+    // A small but real config the builder can mutate: one route with a two-element handle array.
+    private const string BaseConfig = """
+    {"apps":{"http":{"servers":{"srv0":{"routes":[
+      {"match":[{"host":["a.example.com"]}],
+       "handle":[{"handler":"rewrite","uri":"/old"},{"handler":"reverse_proxy"}],
+       "terminal":true}
+    ]}}}}}
+    """;
+
+    /// <summary>ICaddyAdmin fake: serves a config, records every LoadConfigAsync payload,
+    /// returns scripted /load results (default Ok). Granular write verbs throw — the edit path
+    /// must not call them any more.</summary>
     private sealed class FakeAdmin : ICaddyAdmin
     {
-        public string RawConfig = """{"config":"current"}""";
-        public readonly List<(string Method, string Path)> Calls = new();
-        public Queue<WriteResult> UpsertResults = new();
-        public Queue<WriteResult> PostResults = new();
-        public Queue<WriteResult> DeleteResults = new();
+        public string RawConfig = BaseConfig;
+        public readonly List<string> LoadCalls = new();
+        public Queue<WriteResult> LoadResults = new();
 
         public Task<string> GetRawConfigAsync(CancellationToken ct = default) => Task.FromResult(RawConfig);
 
-        public Task<WriteResult> UpsertConfigAsync(string path, string json, CancellationToken ct = default)
+        public Task<WriteResult> LoadConfigAsync(string fullConfigJson, CancellationToken ct = default)
         {
-            Calls.Add(("UPSERT", path));
-            return Task.FromResult(UpsertResults.Count > 0 ? UpsertResults.Dequeue() : WriteResult.Ok);
-        }
-
-        public Task<WriteResult> PostConfigAsync(string path, string json, CancellationToken ct = default)
-        {
-            Calls.Add(("POST", path));
-            return Task.FromResult(PostResults.Count > 0 ? PostResults.Dequeue() : WriteResult.Ok);
-        }
-
-        public Task<WriteResult> DeleteConfigAsync(string path, CancellationToken ct = default)
-        {
-            Calls.Add(("DELETE", path));
-            return Task.FromResult(DeleteResults.Count > 0 ? DeleteResults.Dequeue() : WriteResult.Ok);
+            LoadCalls.Add(fullConfigJson);
+            return Task.FromResult(LoadResults.Count > 0 ? LoadResults.Dequeue() : WriteResult.Ok);
         }
 
         public Task<CaddyStatus> GetStatusAsync(CancellationToken ct = default) => throw new NotImplementedException();
@@ -47,7 +50,9 @@ public class EditCoordinatorOpsTests : IDisposable
         public Task<string> GetConfigNodeAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<WriteResult> PatchConfigAsync(string path, string json, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<WriteResult> PutConfigAsync(string path, string json, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<WriteResult> LoadConfigAsync(string fullConfigJson, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<WriteResult> UpsertConfigAsync(string path, string json, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<WriteResult> PostConfigAsync(string path, string json, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<WriteResult> DeleteConfigAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<AdaptResult> AdaptCaddyfileAsync(string caddyfile, CancellationToken ct = default) => throw new NotImplementedException();
     }
 
@@ -59,11 +64,26 @@ public class EditCoordinatorOpsTests : IDisposable
         return (new EditCoordinator(fake, store, config), fake, store);
     }
 
-    private static RouteOp Field(string path) =>
-        RouteOp.Field(new PendingWrite(path, $$"""{"p":"{{path}}"}""", "{}", "field:" + path));
+    private static RouteOp Field(string path, string json) =>
+        RouteOp.Field(new PendingWrite(path, json, "{}", "field:" + path));
+
+    private static JsonNode? At(string json, string path)
+    {
+        JsonNode? node = JsonNode.Parse(json);
+        foreach (var seg in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (node is JsonArray arr && int.TryParse(seg, out var i)) node = (i >= 0 && i < arr.Count) ? arr[i] : null;
+            else if (node is JsonObject obj) node = obj.TryGetPropertyValue(seg, out var v) ? v : null;
+            else return null;
+            if (node is null) return null;
+        }
+        return node;
+    }
+
+    private const string HandleArr = "apps/http/servers/srv0/routes/0/handle";
 
     [Fact]
-    public async Task ApplyOps_Empty_NoSnapshotNoWrite()
+    public async Task ApplyOps_Empty_NoSnapshotNoLoad()
     {
         var (coord, fake, store) = NewCoordinator();
 
@@ -71,126 +91,96 @@ public class EditCoordinatorOpsTests : IDisposable
 
         Assert.Equal(0, result.Applied);
         Assert.Equal(0, result.Total);
-        Assert.Null(result.FailedLabel);
         Assert.Null(result.Error);
-        Assert.Empty(fake.Calls);
+        Assert.Empty(fake.LoadCalls);
         Assert.Empty(store.All());
     }
 
     [Fact]
-    public async Task ApplyOps_OrdersDeletesHighIndexFirst_ThenAdds_ThenFields()
+    public async Task ApplyOps_AllSucceed_SingleLoadWithComputedCandidate()
     {
         var (coord, fake, _) = NewCoordinator();
         var ops = new[]
         {
-            RouteOp.Delete("a/handle/0", "{}", "del0"),
-            Field("a/handle/1/uri"),
-            RouteOp.Add("a/handle", """{"handler":"x"}""", "add"),
-            RouteOp.Delete("a/handle/2", "{}", "del2"),
+            Field(HandleArr + "/0/uri", "\"/new\""),
+            RouteOp.Add(HandleArr, """{"handler":"encode"}""", "add encode"),
         };
 
         var result = await coord.ApplyOpsAsync(ops, "ops");
 
         Assert.True(result.AllSucceeded);
-        Assert.Equal(4, result.Applied);
-        Assert.Equal(4, result.Total);
-        // deletes by descending index, then add, then field.
-        // del0 deletes index 0 => the field's handler shifts from index 1 to index 0.
-        Assert.Equal(new[]
-        {
-            ("DELETE", "a/handle/2"),
-            ("DELETE", "a/handle/0"),
-            ("POST", "a/handle"),
-            ("UPSERT", "a/handle/0/uri"),
-        }, fake.Calls.ToArray());
+        Assert.Equal(2, result.Applied);
+        Assert.Equal(2, result.Total);
+        // Exactly one /load with the fully-computed candidate.
+        var candidate = Assert.Single(fake.LoadCalls);
+        Assert.Equal("/new", At(candidate, HandleArr + "/0/uri")!.GetValue<string>());
+        Assert.Equal("encode", At(candidate, HandleArr + "/2/handler")!.GetValue<string>());
     }
 
     [Fact]
-    public async Task ApplyOps_StopsOnFirstFailure()
+    public async Task ApplyOps_DeleteThenFieldSameArray_NoManualRepathNeeded()
     {
+        // Delete handle[0] (rewrite), then set a field on the surviving reverse_proxy which is now
+        // at index 0. In-memory mutation handles the shift; the field op targets the post-delete index.
         var (coord, fake, _) = NewCoordinator();
-        fake.DeleteResults.Enqueue(WriteResult.Fail("boom")); // first delete (highest index) fails
         var ops = new[]
         {
-            RouteOp.Delete("a/handle/0", "{}", "del0"),
-            RouteOp.Delete("a/handle/2", "{}", "del2"),
-            RouteOp.Add("a/handle", """{"handler":"x"}""", "add"),
+            RouteOp.Delete(HandleArr + "/0", "{}", "del rewrite"),
+            Field(HandleArr + "/0/handler", "\"reverse_proxy_v2\""),
         };
+
+        var result = await coord.ApplyOpsAsync(ops, "ops");
+
+        Assert.True(result.AllSucceeded);
+        var candidate = Assert.Single(fake.LoadCalls);
+        Assert.Single((JsonArray)At(candidate, HandleArr)!);
+        Assert.Equal("reverse_proxy_v2", At(candidate, HandleArr + "/0/handler")!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task ApplyOps_LoadFails_AppliedZero_ErrorSurfaced_SnapshotStillCaptured()
+    {
+        var (coord, fake, store) = NewCoordinator();
+        fake.LoadResults.Enqueue(WriteResult.Fail("provision error: bad upstream"));
+        var ops = new[] { Field(HandleArr + "/0/uri", "\"/x\"") };
 
         var result = await coord.ApplyOpsAsync(ops, "ops");
 
         Assert.False(result.AllSucceeded);
         Assert.Equal(0, result.Applied);
-        Assert.Equal(3, result.Total);
-        Assert.Equal("del2", result.FailedLabel); // highest index goes first
-        Assert.NotNull(result.Error);
-        Assert.Contains("boom", result.Error);
-        // only the failing delete was issued, nothing after
-        Assert.Equal(new[] { ("DELETE", "a/handle/2") }, fake.Calls.ToArray());
+        Assert.Equal(1, result.Total);
+        Assert.Contains("provision error", result.Error);
+        Assert.Single(fake.LoadCalls);           // we did attempt the load
+        Assert.Single(store.All());              // snapshot of the known-good config remains
     }
 
     [Fact]
-    public async Task ApplyOps_SnapshotsOnce()
+    public async Task ApplyOps_InvalidOp_NoLoad_NoSnapshot()
     {
-        var (coord, _, store) = NewCoordinator();
-        var ops = new[]
-        {
-            RouteOp.Delete("a/handle/0", "{}", "del0"),
-            RouteOp.Add("a/handle", """{"handler":"x"}""", "add"),
-            Field("a/handle/3/uri"),
-        };
+        var (coord, fake, store) = NewCoordinator();
+        // Delete an out-of-range index → candidate build fails before any network call.
+        var ops = new[] { RouteOp.Delete(HandleArr + "/9", "{}", "oob") };
+
+        var result = await coord.ApplyOpsAsync(ops, "ops");
+
+        Assert.False(result.AllSucceeded);
+        Assert.Equal(0, result.Applied);
+        Assert.NotNull(result.Error);
+        Assert.Empty(fake.LoadCalls);
+        Assert.Empty(store.All());
+    }
+
+    [Fact]
+    public async Task ApplyOps_SnapshotsKnownGoodConfigOnce()
+    {
+        var (coord, fake, store) = NewCoordinator();
+        var ops = new[] { Field(HandleArr + "/0/uri", "\"/z\"") };
 
         await coord.ApplyOpsAsync(ops, "ops");
 
-        Assert.Single(store.All());
-    }
-
-    [Fact]
-    public async Task ApplyOps_FieldRepathedAfterLowerDelete()
-    {
-        var (coord, fake, _) = NewCoordinator();
-        var ops = new[]
-        {
-            RouteOp.Delete("a/handle/0", "{}", "del0"),
-            Field("a/handle/2/uri"),
-        };
-
-        var result = await coord.ApplyOpsAsync(ops, "ops");
-
-        Assert.True(result.AllSucceeded);
-        // index 0 deleted => field's handler shifted 2 -> 1
-        var upsert = Assert.Single(fake.Calls, c => c.Method == "UPSERT");
-        Assert.Equal("a/handle/1/uri", upsert.Path);
-    }
-
-    [Fact]
-    public async Task ApplyOps_FieldRepathedAfterTwoLowerDeletes_EndToEnd()
-    {
-        // End-to-end (not just the helper): two deletes below the field shift it cumulatively.
-        var (coord, fake, _) = NewCoordinator();
-        var ops = new[]
-        {
-            RouteOp.Delete("a/handle/0", "{}", "del0"),
-            RouteOp.Delete("a/handle/1", "{}", "del1"),
-            Field("a/handle/3/uri"),
-        };
-
-        var result = await coord.ApplyOpsAsync(ops, "ops");
-
-        Assert.True(result.AllSucceeded);
-        // deletes applied high-first (DELETE 1, DELETE 0); field at index 3 shifts down by 2 -> 1.
-        Assert.Equal(new[] { ("DELETE", "a/handle/1"), ("DELETE", "a/handle/0") },
-            fake.Calls.Where(c => c.Method == "DELETE").ToArray());
-        var upsert = Assert.Single(fake.Calls, c => c.Method == "UPSERT");
-        Assert.Equal("a/handle/1/uri", upsert.Path);
-    }
-
-    [Fact]
-    public void Repath_NonArrayElementDelete_DoesNotShift()
-    {
-        // A delete whose path has no numeric index (di == -1) must not spuriously shift field indices.
-        var result = EditCoordinator.RepathAfterDeletes("a/handle/2/uri", new[] { ("a/handle", -1) });
-        Assert.Equal("a/handle/2/uri", result);
+        var snap = Assert.Single(store.All());
+        // The snapshot is the PRE-edit config, not the candidate.
+        Assert.Equal("/old", At(snap.ConfigJson, HandleArr + "/0/uri")!.GetValue<string>());
     }
 
     [Fact]
@@ -198,46 +188,26 @@ public class EditCoordinatorOpsTests : IDisposable
     {
         var (coord, fake, store) = NewCoordinator(readOnly: true);
 
-        var result = await coord.ApplyOpsAsync(new[] { Field("a/handle/0/uri") }, "ops");
+        var result = await coord.ApplyOpsAsync(new[] { Field(HandleArr + "/0/uri", "\"/x\"") }, "ops");
 
         Assert.False(result.AllSucceeded);
         Assert.Equal(0, result.Applied);
         Assert.NotNull(result.Error);
-        Assert.Empty(fake.Calls);
+        Assert.Empty(fake.LoadCalls);
         Assert.Empty(store.All());
     }
 
-    // --- Direct unit tests of the re-pathing helper (internal via InternalsVisibleTo) ---
-
     [Fact]
-    public void Repath_FieldAboveDelete_Decrements()
-        => Assert.Equal("a/handle/1/uri",
-            EditCoordinator.RepathAfterDeletes("a/handle/2/uri", new[] { ("a/handle", 0) }));
-
-    [Fact]
-    public void Repath_FieldInDifferentArray_Unchanged()
-        => Assert.Equal("b/handle/2/uri",
-            EditCoordinator.RepathAfterDeletes("b/handle/2/uri", new[] { ("a/handle", 0) }));
-
-    [Fact]
-    public void Repath_FieldAtOrBelowDeleteIndex_Unchanged()
+    public async Task ApplyAsync_SingleRouteOp_GoesThroughLoad()
     {
-        Assert.Equal("a/handle/2/uri",
-            EditCoordinator.RepathAfterDeletes("a/handle/2/uri", new[] { ("a/handle", 3) }));
-        // equal index => not greater than, so unchanged
-        Assert.Equal("a/handle/2/uri",
-            EditCoordinator.RepathAfterDeletes("a/handle/2/uri", new[] { ("a/handle", 2) }));
+        var (coord, fake, _) = NewCoordinator();
+
+        var result = await coord.ApplyAsync(Field(HandleArr + "/0/uri", "\"/single\""), "single edit");
+
+        Assert.True(result.Success);
+        var candidate = Assert.Single(fake.LoadCalls);
+        Assert.Equal("/single", At(candidate, HandleArr + "/0/uri")!.GetValue<string>());
     }
-
-    [Fact]
-    public void Repath_MultipleLowerDeletes_DecrementCumulatively()
-        => Assert.Equal("a/handle/3/uri",
-            EditCoordinator.RepathAfterDeletes("a/handle/5/uri", new[] { ("a/handle", 0), ("a/handle", 1) }));
-
-    [Fact]
-    public void Repath_NoDeletes_Unchanged()
-        => Assert.Equal("a/handle/2/uri",
-            EditCoordinator.RepathAfterDeletes("a/handle/2/uri", Array.Empty<(string, int)>()));
 
     public void Dispose()
     {

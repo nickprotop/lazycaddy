@@ -83,7 +83,7 @@ public sealed class NewRouteWizard : ModalBase<bool>
 
         var hostLabel = hosts.Length > 0 ? string.Join(", ", hosts) : "(catch-all)";
         var result = await _editor.ApplyAsync(
-            (admin, ct) => admin.PostConfigAsync($"{_serverPath}/routes", routeJson, ct),
+            RouteOp.Add($"{_serverPath}/routes", routeJson, $"add route {hostLabel} [{chosen}]"),
             $"add route {hostLabel} [{chosen}]");
         if (!result.Success) { Err(result.Error ?? "Write failed."); return; }
 

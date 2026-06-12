@@ -58,7 +58,7 @@ public sealed class EditTlsPolicyDialog : ModalBase<bool>
         string oldJson;
         try { oldJson = await _editor.GetConfigNodeAsync(path); } catch { oldJson = "(unknown)"; }
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, "Apply TLS issuer", oldJson, newJson, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(path, newJson, ct), $"tls issuer {_cert.Domain} → {issuer}");
+        var result = await _editor.ApplyAsync(RouteOp.Field(path, newJson, $"tls issuer {_cert.Domain} → {issuer}"), $"tls issuer {_cert.Domain} → {issuer}");
         if (result.Success) CloseWithResult(true);
         else _error?.SetContent(new List<string> { $"[{UIConstants.Bad.ToMarkup()}]{(result.Error ?? "").Replace("[", "[[").Replace("]", "]]")}[/]" });
     }

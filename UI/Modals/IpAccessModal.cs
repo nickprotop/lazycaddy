@@ -128,7 +128,7 @@ public sealed class IpAccessModal : ModalBase<bool>
             return;
 
         var res = await _editor.ApplyAsync(
-            (admin, ct) => admin.PatchConfigAsync($"{_route.ConfigPath}/match", newMatchJson, ct),
+            RouteOp.Field($"{_route.ConfigPath}/match", newMatchJson, $"allow {key} {string.Join(", ", ranges)} on {_route.HostOrMatch}"),
             $"allow {key} {string.Join(", ", ranges)} on {_route.HostOrMatch}");
 
         if (res.Success) CloseWithResult(true);
@@ -152,7 +152,7 @@ public sealed class IpAccessModal : ModalBase<bool>
 
         var key = clientIp ? "client_ip" : "remote_ip";
         var res = await _editor.ApplyAsync(
-            (admin, ct) => admin.PutConfigAsync($"{routesPath}/{n}", denyJson, ct),
+            RouteOp.Insert(routesPath, n, denyJson, $"deny {key} {string.Join(", ", ranges)} before {_route.HostOrMatch}"),
             $"deny {key} {string.Join(", ", ranges)} before {_route.HostOrMatch}");
 
         if (res.Success) CloseWithResult(true);

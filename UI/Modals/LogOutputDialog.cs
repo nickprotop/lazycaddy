@@ -140,7 +140,7 @@ public sealed class LogOutputDialog : ModalBase<bool>
         var merged = HandlerPatch.MergeUnmanaged(_original, managed, managedKeys);
 
         if (!await DiffConfirmDialog.ShowAsync(WindowSystem, $"Apply log {_logName}", _original, merged, Modal)) return;
-        var result = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(_path, merged, ct), $"log {_logName}");
+        var result = await _editor.ApplyAsync(RouteOp.Field(_path, merged, $"log {_logName}"), $"log {_logName}");
         if (result.Success) CloseWithResult(true); else Err(result.Error ?? "Write failed.");
     }
 

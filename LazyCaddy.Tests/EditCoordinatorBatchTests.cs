@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using LazyCaddy.Configuration;
 using LazyCaddy.Models;
 using LazyCaddy.Services;
@@ -5,24 +6,34 @@ using Xunit;
 
 namespace LazyCaddy.Tests;
 
+/// <summary>
+/// ApplyBatchAsync (the consolidated modal's PendingWrite batch) now computes a single candidate
+/// config from all writes and POSTs /load once — transactional, all-or-nothing.
+/// </summary>
 public class EditCoordinatorBatchTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "lazycaddy-batch-" + Guid.NewGuid().ToString("N"));
 
-    /// <summary>Hand-written ICaddyAdmin fake: records Upsert calls, returns scripted results.</summary>
+    private const string BaseConfig = """
+    {"apps":{"http":{"servers":{"srv0":{"routes":[
+      {"match":[{"host":["a.example.com"]}],
+       "handle":[{"handler":"reverse_proxy"}],
+       "terminal":true}
+    ]}}}}}
+    """;
+
     private sealed class FakeAdmin : ICaddyAdmin
     {
-        public string RawConfig = """{"config":"current"}""";
-        public readonly List<(string Path, string Json)> UpsertCalls = new();
-        public Queue<WriteResult> UpsertResults = new();
+        public string RawConfig = BaseConfig;
+        public readonly List<string> LoadCalls = new();
+        public Queue<WriteResult> LoadResults = new();
 
         public Task<string> GetRawConfigAsync(CancellationToken ct = default) => Task.FromResult(RawConfig);
 
-        public Task<WriteResult> UpsertConfigAsync(string path, string json, CancellationToken ct = default)
+        public Task<WriteResult> LoadConfigAsync(string fullConfigJson, CancellationToken ct = default)
         {
-            UpsertCalls.Add((path, json));
-            var r = UpsertResults.Count > 0 ? UpsertResults.Dequeue() : WriteResult.Ok;
-            return Task.FromResult(r);
+            LoadCalls.Add(fullConfigJson);
+            return Task.FromResult(LoadResults.Count > 0 ? LoadResults.Dequeue() : WriteResult.Ok);
         }
 
         public Task<CaddyStatus> GetStatusAsync(CancellationToken ct = default) => throw new NotImplementedException();
@@ -33,9 +44,9 @@ public class EditCoordinatorBatchTests : IDisposable
         public Task<string> GetConfigNodeAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<WriteResult> PatchConfigAsync(string path, string json, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<WriteResult> PutConfigAsync(string path, string json, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<WriteResult> UpsertConfigAsync(string path, string json, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<WriteResult> PostConfigAsync(string path, string json, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<WriteResult> DeleteConfigAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<WriteResult> LoadConfigAsync(string fullConfigJson, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<AdaptResult> AdaptCaddyfileAsync(string caddyfile, CancellationToken ct = default) => throw new NotImplementedException();
     }
 
@@ -47,57 +58,91 @@ public class EditCoordinatorBatchTests : IDisposable
         return (new EditCoordinator(fake, store, config), fake, store);
     }
 
-    private static PendingWrite W(string path) => new(path, $$"""{"p":"{{path}}"}""", "{}", "label:" + path);
+    private const string Route0 = "apps/http/servers/srv0/routes/0";
+
+    // Each write upserts a field on route 0.
+    private static PendingWrite W(string relPath, string json) =>
+        new(Route0 + "/" + relPath, json, "{}", "label:" + relPath);
+
+    private static JsonNode? At(string json, string path)
+    {
+        JsonNode? node = JsonNode.Parse(json);
+        foreach (var seg in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (node is JsonArray arr && int.TryParse(seg, out var i)) node = (i >= 0 && i < arr.Count) ? arr[i] : null;
+            else if (node is JsonObject obj) node = obj.TryGetPropertyValue(seg, out var v) ? v : null;
+            else return null;
+            if (node is null) return null;
+        }
+        return node;
+    }
 
     [Fact]
-    public async Task ApplyBatch_AllSucceed_WritesEachInOrder()
+    public async Task ApplyBatch_AllSucceed_SingleLoadWithAllFieldsApplied()
     {
         var (coord, fake, _) = NewCoordinator();
-        var writes = new[] { W("a/0"), W("b/1"), W("c/2") };
+        var writes = new[]
+        {
+            W("terminal", "false"),
+            W("match", """[{"host":["b.example.com"]}]"""),
+        };
 
         var result = await coord.ApplyBatchAsync(writes, "batch");
 
-        Assert.Equal(3, result.Applied);
-        Assert.Equal(3, result.Total);
         Assert.True(result.AllSucceeded);
-        Assert.Null(result.Error);
-        Assert.Equal(new[] { "a/0", "b/1", "c/2" }, fake.UpsertCalls.Select(c => c.Path).ToArray());
+        Assert.Equal(2, result.Applied);
+        Assert.Equal(2, result.Total);
+        var candidate = Assert.Single(fake.LoadCalls);
+        Assert.False(At(candidate, Route0 + "/terminal")!.GetValue<bool>());
+        Assert.Equal("b.example.com", At(candidate, Route0 + "/match/0/host/0")!.GetValue<string>());
     }
 
     [Fact]
-    public async Task ApplyBatch_StopsOnFirstFailure()
+    public async Task ApplyBatch_LoadFails_AppliedZero_ErrorSurfaced()
     {
-        var (coord, fake, _) = NewCoordinator();
-        fake.UpsertResults.Enqueue(WriteResult.Ok);          // write #1 ok
-        fake.UpsertResults.Enqueue(WriteResult.Fail("bad")); // write #2 fails
-        fake.UpsertResults.Enqueue(WriteResult.Ok);          // write #3 should never run
-        var writes = new[] { W("a/0"), W("b/1"), W("c/2") };
+        var (coord, fake, store) = NewCoordinator();
+        fake.LoadResults.Enqueue(WriteResult.Fail("bad config"));
+        var writes = new[] { W("terminal", "false") };
 
         var result = await coord.ApplyBatchAsync(writes, "batch");
 
-        Assert.Equal(1, result.Applied);
-        Assert.Equal(3, result.Total);
         Assert.False(result.AllSucceeded);
-        Assert.Equal(writes[1].Label, result.FailedLabel);
-        Assert.NotNull(result.Error);
-        Assert.Contains("bad", result.Error);
-        // only writes 1 and 2 issued, not 3
-        Assert.Equal(new[] { "a/0", "b/1" }, fake.UpsertCalls.Select(c => c.Path).ToArray());
-    }
-
-    [Fact]
-    public async Task ApplyBatch_SnapshotsOnceBeforeWrites()
-    {
-        var (coord, _, store) = NewCoordinator();
-        var writes = new[] { W("a/0"), W("b/1") };
-
-        await coord.ApplyBatchAsync(writes, "batch");
-
+        Assert.Equal(0, result.Applied);
+        Assert.Equal(1, result.Total);
+        Assert.Contains("bad config", result.Error);
+        Assert.Single(fake.LoadCalls);
         Assert.Single(store.All());
     }
 
     [Fact]
-    public async Task ApplyBatch_Empty_NoSnapshotNoWrite()
+    public async Task ApplyBatch_InvalidWrite_NoLoad_NoSnapshot()
+    {
+        var (coord, fake, store) = NewCoordinator();
+        // Path descends through a scalar (terminal) → candidate build fails.
+        var writes = new[] { W("terminal/x", "1") };
+
+        var result = await coord.ApplyBatchAsync(writes, "batch");
+
+        Assert.False(result.AllSucceeded);
+        Assert.Equal(0, result.Applied);
+        Assert.NotNull(result.Error);
+        Assert.Empty(fake.LoadCalls);
+        Assert.Empty(store.All());
+    }
+
+    [Fact]
+    public async Task ApplyBatch_SnapshotsKnownGoodOnce()
+    {
+        var (coord, _, store) = NewCoordinator();
+
+        await coord.ApplyBatchAsync(new[] { W("terminal", "false") }, "batch");
+
+        var snap = Assert.Single(store.All());
+        Assert.True(At(snap.ConfigJson, Route0 + "/terminal")!.GetValue<bool>()); // pre-edit value
+    }
+
+    [Fact]
+    public async Task ApplyBatch_Empty_NoSnapshotNoLoad()
     {
         var (coord, fake, store) = NewCoordinator();
 
@@ -106,22 +151,22 @@ public class EditCoordinatorBatchTests : IDisposable
         Assert.Equal(0, result.Applied);
         Assert.Equal(0, result.Total);
         Assert.True(result.AllSucceeded);
-        Assert.Empty(fake.UpsertCalls);
+        Assert.Empty(fake.LoadCalls);
         Assert.Empty(store.All());
     }
 
     [Fact]
-    public async Task ApplyBatch_ReadOnly_BlocksWithoutSnapshotOrWrite()
+    public async Task ApplyBatch_ReadOnly_BlocksWithoutSnapshotOrLoad()
     {
         var (coord, fake, store) = NewCoordinator(readOnly: true);
 
-        var result = await coord.ApplyBatchAsync(new[] { W("a/0"), W("b/1") }, "batch");
+        var result = await coord.ApplyBatchAsync(new[] { W("terminal", "false") }, "batch");
 
         Assert.False(result.AllSucceeded);
         Assert.Equal(0, result.Applied);
-        Assert.Equal(2, result.Total);
+        Assert.Equal(1, result.Total);
         Assert.NotNull(result.Error);
-        Assert.Empty(fake.UpsertCalls);
+        Assert.Empty(fake.LoadCalls);
         Assert.Empty(store.All());
     }
 

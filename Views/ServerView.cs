@@ -598,23 +598,19 @@ public sealed class ServerView
             if (!await DiffConfirmDialog.ShowAsync(_ws, "Apply server settings", oldCombined, newCombined, null))
                 return;
 
-            int applied = 0;
-            foreach (var c in changes)
+            // All changed fields land in ONE atomic /load: either every field applies or the
+            // whole config rolls back (no partial state). On failure, nothing was committed.
+            var writes = changes.Select(c => new PendingWrite(c.Path, c.Json, c.Old, c.Label)).ToList();
+            var batchLabel = "server settings: " + string.Join(", ", changes.Select(c => c.Label));
+            var batch = await _editor.ApplyBatchAsync(writes, batchLabel);
+            if (!batch.AllSucceeded)
             {
-                var path = c.Path; var json = c.Json;
-                var r = await _editor.ApplyAsync((a, ct) => a.UpsertConfigAsync(path, json, ct), c.Label);
-                if (!r.Success)
-                {
-                    // Commit the sentinels of the fields that DID write, so they don't stay
-                    // forever-dirty; the unwritten ones remain dirty for retry/revert. Recompute
-                    // _dirty against the now-partially-committed state.
-                    CommitLoadedFor(changes.Take(applied));
-                    _dirty = HasUnsavedChanges();
-                    SetStatus($"[{UIConstants.Bad.ToMarkup()}]{Escape(CaddyErrorFormatter.Format(r.Error))}[/]");
-                    return; // prior writes stay applied
-                }
-                applied++;
+                // Atomic: nothing applied, so all fields remain dirty for retry/revert.
+                _dirty = HasUnsavedChanges();
+                SetStatus($"[{UIConstants.Bad.ToMarkup()}]{Escape(CaddyErrorFormatter.Format(batch.Error))}[/]");
+                return;
             }
+            int applied = batch.Applied;
 
             // Success: commit loaded sentinels to current, drop dirty, pull fresh state.
             CommitLoaded();
@@ -723,27 +719,6 @@ public sealed class ServerView
         _loadedDisable = Chk(_disable); _loadedDisableRedir = Chk(_disableRedir); _loadedDisableCerts = Chk(_disableCerts);
         _loadedTlsMin = CurDd(_tlsMin, _loadedTlsMin); _loadedTlsMax = CurDd(_tlsMax, _loadedTlsMax);
         _loadedTlsCipher = CurDd(_tlsCipher, _loadedTlsCipher);
-    }
-
-    // Commit only the loaded sentinels of the given (already-applied) changes, identified by path.
-    // Used after a partial-apply failure so the successfully-written fields stop registering dirty.
-    private void CommitLoadedFor(IEnumerable<(string Path, string Json, string Old, string New, string Label)> applied)
-    {
-        foreach (var c in applied)
-        {
-            if (c.Path.EndsWith("/listen", StringComparison.Ordinal) && c.Path.StartsWith("apps/http/servers", StringComparison.Ordinal)) _loadedListen = Cur(_listen);
-            else if (c.Path.EndsWith("/protocols", StringComparison.Ordinal)) { _loadedH1 = Chk(_h1); _loadedH2 = Chk(_h2); _loadedH3 = Chk(_h3); }
-            else if (c.Path.EndsWith("/automatic_https", StringComparison.Ordinal)) { _loadedDisable = Chk(_disable); _loadedDisableRedir = Chk(_disableRedir); _loadedDisableCerts = Chk(_disableCerts); _loadedSkip = Cur(_skip); }
-            else if (c.Path.EndsWith("/tls_connection_policies", StringComparison.Ordinal)) { _loadedTlsMin = CurDd(_tlsMin, _loadedTlsMin); _loadedTlsMax = CurDd(_tlsMax, _loadedTlsMax); _loadedTlsCipher = CurDd(_tlsCipher, _loadedTlsCipher); }
-            else if (c.Path.EndsWith("/read_timeout", StringComparison.Ordinal)) _loadedReadTo = Cur(_readTo);
-            else if (c.Path.EndsWith("/read_header_timeout", StringComparison.Ordinal)) _loadedReadHdrTo = Cur(_readHdrTo);
-            else if (c.Path.EndsWith("/write_timeout", StringComparison.Ordinal)) _loadedWriteTo = Cur(_writeTo);
-            else if (c.Path.EndsWith("/idle_timeout", StringComparison.Ordinal)) _loadedIdleTo = Cur(_idleTo);
-            else if (c.Path == "admin" || c.Path == "admin/listen") { _loadedAdminListen = Cur(_adminListen); if (c.Path == "admin") _adminWasNull = false; }
-            else if (c.Path == "apps/http/http_port") _loadedHttpPort = Cur(_httpPort);
-            else if (c.Path == "apps/http/https_port") _loadedHttpsPort = Cur(_httpsPort);
-            else if (c.Path == "apps/http/grace_period") _loadedGrace = Cur(_grace);
-        }
     }
 
     private static string Cur(PromptControl? c) => (c?.Input ?? "").Trim();

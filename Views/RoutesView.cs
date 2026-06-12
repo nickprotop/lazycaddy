@@ -437,7 +437,7 @@ public sealed class RoutesView
         if (string.IsNullOrEmpty(hd.ConfigPath)) return;
         if (!await ConfirmDeleteDialog.ShowAsync(_windowSystem, $"handler {hd.Type}")) return;
         await _editor.ApplyAsync(
-            (admin, ct) => admin.DeleteConfigAsync(hd.ConfigPath, ct),
+            RouteOp.Delete(hd.ConfigPath, "{}", $"delete {hd.Type} handler"),
             $"delete {hd.Type} handler");
     }
 
@@ -458,7 +458,7 @@ public sealed class RoutesView
         if (newJson == arrayJson) return; // out of bounds / no-op
 
         await _editor.ApplyAsync(
-            (admin, ct) => admin.PatchConfigAsync(arrayPath, newJson, ct),
+            RouteOp.Field(arrayPath, newJson, "reorder handlers"),
             "reorder handlers");
     }
 
@@ -480,7 +480,7 @@ public sealed class RoutesView
             try { arrJsonF = await _editor.GetConfigNodeAsync(arrF); } catch { arrJsonF = "[]"; }
             var idxF = SecurityHandlerPlacement.InsertIndex(arrJsonF);
             var splicedF = SpliceAt(arrJsonF, idxF, fjson);
-            var resF = await _editor.ApplyAsync((admin, ct) => admin.PatchConfigAsync(arrF, splicedF, ct), "add forward_auth handler");
+            var resF = await _editor.ApplyAsync(RouteOp.Field(arrF, splicedF, "add forward_auth handler"), "add forward_auth handler");
             if (resF.Success) _expandedRoutes.Add(route.ConfigPath);
             return;
         }
@@ -496,11 +496,11 @@ public sealed class RoutesView
             catch { arrayJson = "[]"; }
             var idx = SecurityHandlerPlacement.InsertIndex(arrayJson);
             var spliced = SpliceAt(arrayJson, idx, json);
-            res = await _editor.ApplyAsync((admin, ct) => admin.PatchConfigAsync(arr, spliced, ct), $"add {type} handler");
+            res = await _editor.ApplyAsync(RouteOp.Field(arr, spliced, $"add {type} handler"), $"add {type} handler");
         }
         else
         {
-            res = await _editor.ApplyAsync((admin, ct) => admin.PostConfigAsync(arr, json, ct), $"add {type} handler");
+            res = await _editor.ApplyAsync(RouteOp.Add(arr, json, $"add {type} handler"), $"add {type} handler");
         }
 
         // Expand the route so the new handler shows on the next poll.
@@ -577,7 +577,7 @@ public sealed class RoutesView
             return;
 
         await _editor.ApplyAsync(
-            (admin, ct) => admin.PostConfigAsync("apps/tls/automation/policies", newJson, ct),
+            RouteOp.Add("apps/tls/automation/policies", newJson, $"enable HTTPS for {string.Join(", ", hosts)}"),
             $"enable HTTPS for {string.Join(", ", hosts)}");
     }
 
@@ -614,13 +614,13 @@ public sealed class RoutesView
 
         var remaining = subjects.Where(s => s != host).ToArray();
         string title, label;
-        Func<ICaddyAdmin, CancellationToken, Task<WriteResult>> write;
+        RouteOp op;
         if (remaining.Length == 0)
         {
             // Sole subject → remove the whole policy.
             title = $"Disable HTTPS for {host} (remove TLS policy)";
             label = $"disable HTTPS for {host}";
-            write = (admin, ct) => admin.DeleteConfigAsync($"apps/tls/automation/policies/{polIdx}", ct);
+            op = RouteOp.Delete($"apps/tls/automation/policies/{polIdx}", "{}", label);
             if (!await DiffConfirmDialog.ShowAsync(_windowSystem, title,
                     System.Text.Json.JsonSerializer.Serialize(subjects), "(policy removed)")) return;
         }
@@ -630,11 +630,11 @@ public sealed class RoutesView
             title = $"Disable HTTPS for {host}";
             label = $"disable HTTPS for {host}";
             var newSubjects = System.Text.Json.JsonSerializer.Serialize(remaining);
-            write = (admin, ct) => admin.PatchConfigAsync($"apps/tls/automation/policies/{polIdx}/subjects", newSubjects, ct);
+            op = RouteOp.Field($"apps/tls/automation/policies/{polIdx}/subjects", newSubjects, label);
             if (!await DiffConfirmDialog.ShowAsync(_windowSystem, title,
                     System.Text.Json.JsonSerializer.Serialize(subjects), newSubjects)) return;
         }
-        await _editor.ApplyAsync(write, label);
+        await _editor.ApplyAsync(op, label);
     }
 
     // Derive the server path (apps/http/servers/<name>) from a route's ConfigPath.
@@ -650,7 +650,7 @@ public sealed class RoutesView
         if (string.IsNullOrEmpty(route.ConfigPath)) return;
         if (!await ConfirmDeleteDialog.ShowAsync(_windowSystem, $"route {route.HostOrMatch}")) return;
         await _editor.ApplyAsync(
-            (admin, ct) => admin.DeleteConfigAsync(route.ConfigPath, ct),
+            RouteOp.Delete(route.ConfigPath, "{}", $"delete route {route.HostOrMatch}"),
             $"delete route {route.HostOrMatch}");
     }
 

@@ -167,7 +167,7 @@ public sealed class RawConfigView
         if (!await DiffConfirmDialog.ShowAsync(_ws, "Apply raw config (/load)", oldCfg, newCfg))
             return;
 
-        var result = await _coordinator.ApplyAsync((a, ct) => a.LoadConfigAsync(newCfg, ct), "raw config edit (/load)");
+        var result = await _coordinator.LoadFullConfigAsync(newCfg, "raw config edit (/load)");
         _editor.ReadOnly = true;
         RebuildToolbar();
         if (result.Success)
