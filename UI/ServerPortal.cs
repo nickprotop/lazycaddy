@@ -70,8 +70,12 @@ public sealed class ServerPortal : PortalContentContainer
             .StickyBottom()
             .Build());
 
+        // List rows = servers + separator + Add + Manage. Plus the rule + hint footer (2) and the
+        // box border (2). Size the portal to fit all of it (capped to the window), and let the list
+        // show every row so nothing is clipped or needs scrolling.
+        int listRows = servers.Count + 3;
         int w = Math.Min(52, windowWidth - 4);
-        int h = Math.Min(servers.Count + 6, windowHeight - 2);
+        int h = Math.Min(listRows + 2 + 2, windowHeight - 2);
         PortalBounds = new Rectangle(Math.Max(1, windowWidth - w - 2), 1, w, h);
         _list.MaxVisibleItems = Math.Max(1, h - 2 - 2);
 
