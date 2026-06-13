@@ -16,7 +16,7 @@ using LazyCaddy.UI.Modals;
 
 namespace LazyCaddy.Views;
 
-public sealed class RawConfigView
+public sealed class RawConfigView : ICommandProvider
 {
     private MultilineEditControl? _editor;
     private string _lastContent = string.Empty;
@@ -27,6 +27,29 @@ public sealed class RawConfigView
     private ToolbarControl? _toolbar;
 
     public RawConfigView(ConsoleWindowSystem ws, EditCoordinator coordinator) { _ws = ws; _coordinator = coordinator; }
+
+    public object? SelectedTag => null;
+
+    public IEnumerable<Command> GetCommands()
+    {
+        const int idx = 5;
+        bool onView(CommandContext c) => c.CurrentViewIndex == idx;
+
+        yield return new Command
+        {
+            Id = "rawconfig.find", Label = "Find in raw config", Category = "Raw Config", Icon = "🔍",
+            Keybinding = "Ctrl+F", Priority = 58,
+            CanExecute = onView, DisabledReason = _ => "go to Raw Config",
+            Execute = _ => OpenFind(),
+        };
+        yield return new Command
+        {
+            Id = "rawconfig.edit", Label = "Edit raw config", Category = "Raw Config", Icon = "✎",
+            Keybinding = "i", Priority = 57,
+            CanExecute = onView, DisabledReason = _ => "go to Raw Config",
+            Execute = _ => EnterEdit(),
+        };
+    }
 
     public void Build(ScrollablePanelControl panel)
     {

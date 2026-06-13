@@ -17,7 +17,7 @@ using LazyCaddy.UI.Modals;
 
 namespace LazyCaddy.Views;
 
-public sealed class CertsView
+public sealed class CertsView : ICommandProvider
 {
     private readonly ConsoleWindowSystem _ws;
     private readonly EditCoordinator _editor;
@@ -43,6 +43,20 @@ public sealed class CertsView
             return true;
         }
         return false;
+    }
+
+    public object? SelectedTag => _table?.SelectedRow?.Tag;
+
+    public IEnumerable<Command> GetCommands()
+    {
+        yield return new Command
+        {
+            Id = "certs.edit-tls", Label = "Edit TLS policy", Category = "TLS / Certs", Icon = "🔒",
+            Keybinding = "e", Priority = 60,
+            CanExecute = c => c.CurrentViewIndex == 3 && c.SelectedTag is Cert,
+            DisabledReason = c => c.CurrentViewIndex == 3 ? "select a certificate first" : "go to TLS / Certs",
+            Execute = _ => EditTls(),
+        };
     }
 
     // Shared handler for both the 'e' key and the TLS toolbar button. No-ops without a row.

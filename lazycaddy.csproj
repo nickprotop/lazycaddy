@@ -25,6 +25,11 @@
     <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
   </ItemGroup>
 
+  <!-- Help topics embedded so they ship in the single-file binary -->
+  <ItemGroup>
+    <EmbeddedResource Include="Help/*.md" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="LazyCaddy.Tests" />
   </ItemGroup>

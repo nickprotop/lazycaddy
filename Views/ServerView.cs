@@ -26,7 +26,7 @@ using LazyCaddy.UI.Modals;
 
 namespace LazyCaddy.Views;
 
-public sealed class ServerView
+public sealed class ServerView : ICommandProvider
 {
     private readonly ConsoleWindowSystem _ws;
     private readonly EditCoordinator _editor;
@@ -74,6 +74,36 @@ public sealed class ServerView
         _ws = ws;
         _editor = editor;
         _onRefresh = onRefresh;
+    }
+
+    public object? SelectedTag => null;
+
+    public IEnumerable<Command> GetCommands()
+    {
+        const int idx = 9;
+        bool onView(CommandContext c) => c.CurrentViewIndex == idx;
+
+        yield return new Command
+        {
+            Id = "server.apply", Label = "Apply server settings", Category = "Server", Icon = "✔",
+            Keybinding = "s", Priority = 54,
+            CanExecute = onView, DisabledReason = _ => "go to Server",
+            Execute = ctx => { _ = ApplyAsync(); },
+        };
+        yield return new Command
+        {
+            Id = "server.revert", Label = "Revert server edits", Category = "Server", Icon = "↺",
+            Keybinding = "v", Priority = 53,
+            CanExecute = onView, DisabledReason = _ => "go to Server",
+            Execute = _ => Revert(),
+        };
+        yield return new Command
+        {
+            Id = "server.reload", Label = "Reload server settings", Category = "Server", Icon = "⟳",
+            Keybinding = "r", Priority = 52,
+            CanExecute = onView, DisabledReason = _ => "go to Server",
+            Execute = _ => Reload(),
+        };
     }
 
     /// <summary>Focus the server selector so the form is navigable immediately on view entry.</summary>

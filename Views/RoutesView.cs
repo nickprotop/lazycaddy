@@ -21,7 +21,7 @@ using LazyCaddy.UI.Modals;
 
 namespace LazyCaddy.Views;
 
-public sealed class RoutesView
+public sealed class RoutesView : ICommandProvider
 {
     private readonly ConsoleWindowSystem _windowSystem;
     private readonly EditCoordinator _editor;
@@ -539,6 +539,55 @@ public sealed class RoutesView
     }
 
     // ── Route-level actions (preserved from the flat view) ──
+
+    /// <summary>The currently-selected route row tag (for the command portal's context).</summary>
+    public object? SelectedTag => _table?.SelectedRow?.Tag;
+
+    private const int RoutesViewIndex = 2;
+
+    public IEnumerable<Command> GetCommands()
+    {
+        // Enabled only while viewing Routes (so the route actions target the visible selection).
+        bool OnRoutes(CommandContext c) => c.CurrentViewIndex == RoutesViewIndex;
+        bool OnRouteRow(CommandContext c) => OnRoutes(c) && c.SelectedTag is Route;
+        string RowReason(CommandContext c) => OnRoutes(c) ? "select a route first" : "go to Routes";
+
+        yield return new Command
+        {
+            Id = "routes.new", Label = "New route", Category = "Routes", Icon = "⊕",
+            Keybinding = "n", Priority = 70,
+            CanExecute = OnRoutes, DisabledReason = _ => "go to Routes",
+            Execute = _ => NewRoute(),
+        };
+        yield return new Command
+        {
+            Id = "routes.edit-match", Label = "Edit route match", Category = "Routes", Icon = "✎",
+            Keybinding = "e", Priority = 69,
+            CanExecute = OnRouteRow, DisabledReason = RowReason,
+            Execute = c => { if (c.SelectedTag is Route r) EditMatch(r); },
+        };
+        yield return new Command
+        {
+            Id = "routes.ip-access", Label = "IP access (allow/deny)", Category = "Routes", Icon = "⛒",
+            Keybinding = "i", Priority = 66,
+            CanExecute = OnRouteRow, DisabledReason = RowReason,
+            Execute = c => { if (c.SelectedTag is Route r) _ = IpAccessAsync(r); },
+        };
+        yield return new Command
+        {
+            Id = "routes.toggle-https", Label = "Enable/Disable HTTPS", Category = "Routes", Icon = "🔒",
+            Keybinding = "h", Priority = 65,
+            CanExecute = OnRouteRow, DisabledReason = RowReason,
+            Execute = c => { if (c.SelectedTag is Route r) { if (r.TlsEnabled) _ = DisableHttpsAsync(r); else _ = EnableHttpsAsync(r); } },
+        };
+        yield return new Command
+        {
+            Id = "routes.delete", Label = "Delete route", Category = "Routes", Icon = "✕",
+            Keybinding = "d", Priority = 60,
+            CanExecute = OnRouteRow, DisabledReason = RowReason,
+            Execute = c => { if (c.SelectedTag is Route r) _ = DeleteRouteAsync(r); },
+        };
+    }
 
     private void EditMatch(Route route)
     {

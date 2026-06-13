@@ -13,6 +13,8 @@ using SharpConsoleUI.Rendering;
 using LazyCaddy.Configuration;
 using LazyCaddy.Models;
 using LazyCaddy.Services;
+using LazyCaddy.UI;
+using LazyCaddy.UI.Modals;
 using LazyCaddy.Views;
 
 namespace LazyCaddy.Dashboard;
@@ -40,6 +42,11 @@ public sealed class DashboardShell
 
     private Window? _window;
     private NavigationView? _nav;
+
+    // Command portal (Ctrl+K). Registry built once in Create(); portal overlay is transient.
+    private readonly CommandRegistry _commands = new();
+    private CommandPortal? _portal;
+    private SharpConsoleUI.Layout.LayoutNode? _portalNode;
 
     // Status bar item handles, mutated in place each tick (Label supports markup).
     private StatusBarItem? _connItem;
@@ -104,6 +111,10 @@ public sealed class DashboardShell
             .BuildAndShow();
 
         _window = window;
+        // Route keys to the command portal before normal focus dispatch (same mechanism as
+        // LazyDotIde): while the portal is open it handles Esc/Enter/↑↓/typing via ProcessKey.
+        _window.PreviewKeyPressed += OnPreviewKey;
+        RegisterCommands();
         _ = Task.Run(TailLoopAsync);
 
         // Reflow the Overview cards live on terminal resize. ScreenResized may fire
@@ -208,7 +219,9 @@ public sealed class DashboardShell
         bar.AddLeftSeparator();
         _refreshItem = bar.AddLeftText($"[{UIConstants.MutedText.ToMarkup()}]starting…[/]");
 
-        // The shortcut hints are also clickable — same actions as the R / Q keys.
+        // The shortcut hints are also clickable — same actions as the keys.
+        // Right cluster renders left→right in add order, so Help sits left of Refresh.
+        bar.AddRight("F1", "Help", ShowHelp);
         bar.AddRight("R", "Refresh", RequestRefresh);
         bar.AddRight("Q", "Quit", Quit);
         return bar;
@@ -241,6 +254,14 @@ public sealed class DashboardShell
 
     private void OnKeyPressed(object? sender, KeyPressedEventArgs e)
     {
+        // Ctrl+K toggles the command portal, ahead of every other binding so it works from any view.
+        if (e.KeyInfo.Key == ConsoleKey.K && (e.KeyInfo.Modifiers & ConsoleModifiers.Control) != 0)
+        {
+            ToggleCommandPortal();
+            e.Handled = true;
+            return;
+        }
+
         if (_nav is not null && TryDigit(e.KeyInfo, out int view))
         {
             _nav.SelectedIndex = view; // header is index 0, first view is index 1 == digit 1
@@ -255,6 +276,14 @@ public sealed class DashboardShell
         if (_rawConfig.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_logs.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_server.TryHandleKey(e.KeyInfo)) { e.Handled = true; return; }
+
+        // Help: F1 only.
+        if (e.KeyInfo.Key == ConsoleKey.F1)
+        {
+            ShowHelp();
+            e.Handled = true;
+            return;
+        }
 
         switch (e.KeyInfo.Key)
         {
@@ -287,6 +316,107 @@ public sealed class DashboardShell
             _ => 0,
         };
         return view is >= 1 and <= ViewCount;
+    }
+
+    // ── Command portal ──────────────────────────────────────────────────
+
+    private static readonly (int Index, string Label, string Icon)[] ViewDescriptors =
+    {
+        (1, "Overview", "◈"), (2, "Routes", "↦"), (3, "TLS / Certs", "🔒"),
+        (4, "Upstreams", "⇡"), (5, "Raw Config", "{}"), (6, "Snapshots", "⟲"),
+        (7, "Topology", "⌗"), (8, "Logs", "📜"), (9, "Server", "⚙"),
+    };
+
+    private void RegisterCommands()
+    {
+        var views = ViewDescriptors.Select(v => new ViewDescriptor(v.Index, v.Label, v.Icon)).ToList();
+        var actions = new CommandCatalog.Actions(
+            GoToView: GoToView,
+            Refresh: RequestRefresh,
+            QuickUndo: () => _ = QuickUndoAsync(),
+            SnapshotNow: () => _ = SnapshotNowAsync(),
+            AdaptCaddyfile: () => _ = AdaptCaddyfileModal.ShowAsync(_ws, _editor),
+            ShowHelp: ShowHelp,
+            Quit: Quit);
+
+        foreach (var c in CommandCatalog.Build(views, actions))
+            _commands.Register(c);
+
+        // Views contribute their own (context-aware) commands.
+        foreach (var provider in new ICommandProvider[] { _routes, _certs, _snapshots, _rawConfig, _server })
+            foreach (var c in provider.GetCommands())
+                _commands.Register(c);
+    }
+
+    private void ShowHelp() => _ = HelpModal.ShowAsync(_ws, _commands);
+
+    private void GoToView(int view)
+    {
+        if (_nav is null) return;
+        _nav.SelectedIndex = view;
+        FocusPrimaryControl(view);
+    }
+
+    private CommandContext BuildContext()
+        => new(
+            CurrentViewIndex: _nav?.SelectedIndex ?? 0,
+            SelectedTag: CurrentSelectedTag(),
+            HasSnapshots: _editor.Snapshots.MostRecent() is not null,
+            Editor: _editor);
+
+    // The selected row tag of whichever view is open (for context-aware command predicates).
+    private object? CurrentSelectedTag() => (_nav?.SelectedIndex) switch
+    {
+        2 => _routes.SelectedTag,
+        3 => _certs.SelectedTag,
+        6 => _snapshots.SelectedTag,
+        _ => null,
+    };
+
+    // While the portal is open, forward every key to it before normal focus dispatch.
+    private void OnPreviewKey(object? sender, KeyPressedEventArgs e)
+    {
+        if (_portal is null) return;
+        if (_portal.ProcessKey(e.KeyInfo))
+            e.Handled = true;
+    }
+
+    private void ToggleCommandPortal()
+    {
+        if (_portal is not null) { DismissPortal(); return; }
+        if (_window is null || _nav is null) return;
+
+        var portal = new CommandPortal(_commands, BuildContext(), _window.Width, _window.Height);
+        portal.CommandSelected += (_, cmd) =>
+        {
+            var ctx = BuildContext();
+            DismissPortal();
+            if (cmd is not null && cmd.IsEnabled(ctx))
+            {
+                try { cmd.Execute(ctx); }
+                catch (Exception ex) { _ws.EnqueueOnUIThread(() => ShowTransientError(ex.Message)); }
+            }
+        };
+        portal.DismissRequested += (_, _) => DismissPortal();
+
+        _portal = portal;
+        _portalNode = _window.CreatePortal(_nav, portal);
+        portal.FocusSearch(); // move window focus into the portal so it receives keystrokes
+    }
+
+    private void DismissPortal()
+    {
+        if (_portal is null) return;
+        if (_window is not null && _nav is not null && _portalNode is not null)
+            _window.RemovePortal(_nav, _portalNode);
+        _portal = null;
+        _portalNode = null;
+    }
+
+    private void ShowTransientError(string message)
+    {
+        if (_connItem is not null)
+            _connItem.Label = $"[{UIConstants.Bad.ToMarkup()}]{message.Replace("[", "[[").Replace("]", "]]")}[/]";
     }
 
     private async Task QuickUndoAsync()

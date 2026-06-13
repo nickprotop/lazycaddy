@@ -17,7 +17,7 @@ using LazyCaddy.UI.Modals;
 
 namespace LazyCaddy.Views;
 
-public sealed class SnapshotsView
+public sealed class SnapshotsView : ICommandProvider
 {
     private readonly ConsoleWindowSystem _ws;
     private readonly EditCoordinator _editor;
@@ -25,6 +25,31 @@ public sealed class SnapshotsView
     private ToolbarControl? _toolbar;
 
     public SnapshotsView(ConsoleWindowSystem ws, EditCoordinator editor) { _ws = ws; _editor = editor; }
+
+    public object? SelectedTag => _table?.SelectedRow?.Tag;
+
+    public IEnumerable<Command> GetCommands()
+    {
+        const int idx = 6;
+        bool onView(CommandContext c) => c.CurrentViewIndex == idx;
+        bool onRow(CommandContext c) => onView(c) && c.SelectedTag is Snapshot;
+        string rowReason(CommandContext c) => onView(c) ? "select a snapshot first" : "go to Snapshots";
+
+        yield return new Command
+        {
+            Id = "snapshots.restore", Label = "Restore snapshot", Category = "Snapshots", Icon = "↩",
+            Keybinding = "Enter", Priority = 64,
+            CanExecute = onRow, DisabledReason = rowReason,
+            Execute = ctx => { _ = RestoreSelectedAsync(); },
+        };
+        yield return new Command
+        {
+            Id = "snapshots.pin", Label = "Pin / unpin snapshot", Category = "Snapshots", Icon = "⊙",
+            Keybinding = "p", Priority = 62,
+            CanExecute = onRow, DisabledReason = rowReason,
+            Execute = _ => PinSelected(),
+        };
+    }
 
     public void Build(ScrollablePanelControl panel)
     {
