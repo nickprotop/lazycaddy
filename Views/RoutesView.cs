@@ -24,7 +24,8 @@ namespace LazyCaddy.Views;
 public sealed class RoutesView : ICommandProvider
 {
     private readonly ConsoleWindowSystem _windowSystem;
-    private readonly EditCoordinator _editor;
+    private readonly Func<EditCoordinator> _editorFn;
+    private EditCoordinator _editor => _editorFn();   // resolves the active EditCoordinator; keeps all _editor.X call sites identical
 
     private TableControl? _table;
     private ToolbarControl? _toolbar;
@@ -40,10 +41,10 @@ public sealed class RoutesView : ICommandProvider
 
     private static readonly HashSet<string> SecurityTypes = new() { "authentication", "headers", "rate_limit" };
 
-    public RoutesView(ConsoleWindowSystem windowSystem, EditCoordinator editor)
+    public RoutesView(ConsoleWindowSystem windowSystem, Func<EditCoordinator> editor)
     {
         _windowSystem = windowSystem;
-        _editor = editor;
+        _editorFn = editor;
     }
 
     // ── Public surface DashboardShell depends on (signatures must not change) ──

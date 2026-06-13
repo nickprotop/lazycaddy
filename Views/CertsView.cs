@@ -20,14 +20,15 @@ namespace LazyCaddy.Views;
 public sealed class CertsView : ICommandProvider
 {
     private readonly ConsoleWindowSystem _ws;
-    private readonly EditCoordinator _editor;
+    private readonly Func<EditCoordinator> _editorFn;
+    private EditCoordinator _editor => _editorFn();   // resolves the active EditCoordinator
 
     private TableControl? _table;
     private ToolbarControl? _toolbar;
     private MarkupControl? _banner;
     private string? _renderedSignature;   // skip rebuild when unchanged (see Update)
 
-    public CertsView(ConsoleWindowSystem ws, EditCoordinator editor) { _ws = ws; _editor = editor; }
+    public CertsView(ConsoleWindowSystem ws, Func<EditCoordinator> editor) { _ws = ws; _editorFn = editor; }
 
     /// <summary>Focus the certs table so its keys work immediately on view entry.</summary>
     public void FocusPrimary() => _table?.RequestFocus();

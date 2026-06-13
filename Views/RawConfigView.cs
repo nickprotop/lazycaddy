@@ -22,11 +22,12 @@ public sealed class RawConfigView : ICommandProvider
     private string _lastContent = string.Empty;
 
     private readonly ConsoleWindowSystem _ws;
-    private readonly EditCoordinator _coordinator;
+    private readonly Func<EditCoordinator> _coordinatorFn;
+    private EditCoordinator _coordinator => _coordinatorFn();   // resolves the active EditCoordinator
     private MarkupControl? _status;
     private ToolbarControl? _toolbar;
 
-    public RawConfigView(ConsoleWindowSystem ws, EditCoordinator coordinator) { _ws = ws; _coordinator = coordinator; }
+    public RawConfigView(ConsoleWindowSystem ws, Func<EditCoordinator> coordinator) { _ws = ws; _coordinatorFn = coordinator; }
 
     public object? SelectedTag => null;
 

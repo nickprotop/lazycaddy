@@ -29,7 +29,8 @@ namespace LazyCaddy.Views;
 public sealed class ServerView : ICommandProvider
 {
     private readonly ConsoleWindowSystem _ws;
-    private readonly EditCoordinator _editor;
+    private readonly Func<EditCoordinator> _editorFn;
+    private EditCoordinator _editor => _editorFn();   // resolves the active EditCoordinator
     private readonly Action _onRefresh;
 
     // ── Form controls ──
@@ -69,10 +70,10 @@ public sealed class ServerView : ICommandProvider
         "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305",
     };
 
-    public ServerView(ConsoleWindowSystem ws, EditCoordinator editor, Action onRefresh)
+    public ServerView(ConsoleWindowSystem ws, Func<EditCoordinator> editor, Action onRefresh)
     {
         _ws = ws;
-        _editor = editor;
+        _editorFn = editor;
         _onRefresh = onRefresh;
     }
 

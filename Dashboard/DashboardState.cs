@@ -58,4 +58,15 @@ public sealed class DashboardState
             _lastError = error;
         }
     }
+
+    /// <summary>Clear back to the initial connecting/no-snapshot state (used when switching servers).</summary>
+    public void Reset()
+    {
+        lock (_gate)
+        {
+            _snapshot = null;
+            _connection = ConnectionState.Connecting;
+            _lastError = null;
+        }
+    }
 }

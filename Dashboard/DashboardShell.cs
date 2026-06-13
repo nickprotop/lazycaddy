@@ -22,10 +22,19 @@ namespace LazyCaddy.Dashboard;
 public sealed class DashboardShell
 {
     private readonly ConsoleWindowSystem _ws;
-    private readonly LazyCaddyConfig _config;
-    private readonly ICaddyAdmin _admin;
-    private readonly UpstreamProber _prober;
-    private readonly EditCoordinator _editor;
+
+    // The active per-server dependency bundle. Switching servers swaps this; the accessors below
+    // keep every existing _admin/_prober/_editor/_config use valid by resolving through _active.
+    private ConnectionContext _active;
+    private readonly ServerStore _serverStore;
+    private List<ServerEntry> _servers;
+    private int _generation;
+
+    private ICaddyAdmin _admin => _active.Admin;
+    private UpstreamProber _prober => _active.Prober;
+    private EditCoordinator _editor => _active.Editor;
+    private LazyCaddyConfig _config => _active.Config;
+
     private readonly DashboardState _state = new();
 
     // Views (each owns its content factory + Update).
@@ -48,6 +57,11 @@ public sealed class DashboardShell
     private CommandPortal? _portal;
     private SharpConsoleUI.Layout.LayoutNode? _portalNode;
 
+    // Server picker portal (Ctrl+L) + the nav top-right button that toggles it.
+    private ButtonControl? _serverButton;
+    private ServerPortal? _serverPortal;
+    private SharpConsoleUI.Layout.LayoutNode? _serverPortalNode;
+
     // Status bar item handles, mutated in place each tick (Label supports markup).
     private StatusBarItem? _connItem;
     private StatusBarItem? _refreshItem;
@@ -64,22 +78,23 @@ public sealed class DashboardShell
     // Spinner frames for the "polling in flight" indicator in the status bar.
     private static readonly string[] SpinnerFrames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
 
-    public DashboardShell(ConsoleWindowSystem ws, LazyCaddyConfig config, ICaddyAdmin admin, UpstreamProber prober, EditCoordinator editor)
+    public DashboardShell(ConsoleWindowSystem ws, ConnectionContext initial,
+        ServerStore serverStore, IReadOnlyList<ServerEntry> servers)
     {
         _ws = ws;
-        _config = config;
-        _admin = admin;
-        _prober = prober;
-        _editor = editor;
+        _active = initial;
+        _serverStore = serverStore;
+        _servers = servers.ToList();
+        _generation = initial.Generation;
 
-        _overview = new OverviewView(config);
-        _routes = new RoutesView(ws, editor);
-        _certs = new CertsView(ws, editor);
+        _overview = new OverviewView(_config);
+        _routes = new RoutesView(ws, () => _active.Editor);
+        _certs = new CertsView(ws, () => _active.Editor);
         _upstreams = new UpstreamsView();
-        _rawConfig = new RawConfigView(ws, editor);
-        _snapshots = new SnapshotsView(ws, editor);
+        _rawConfig = new RawConfigView(ws, () => _active.Editor);
+        _snapshots = new SnapshotsView(ws, () => _active.Editor);
         _logs = new LogsView(_logState);
-        _server = new ServerView(ws, editor, RequestRefresh);
+        _server = new ServerView(ws, () => _active.Editor, RequestRefresh);
     }
 
     public void Create()
@@ -115,6 +130,11 @@ public sealed class DashboardShell
         // LazyDotIde): while the portal is open it handles Esc/Enter/↑↓/typing via ProcessKey.
         _window.PreviewKeyPressed += OnPreviewKey;
         RegisterCommands();
+
+        // Server picker button in the nav content toolbar (top-right). Clicking it (or Ctrl+L)
+        // opens the ServerPortal anchored under it.
+        _serverButton = _nav.AddContentToolbarButton(ServerButtonLabel(), (_, _) => ToggleServerPortal());
+
         _ = Task.Run(TailLoopAsync);
 
         // Reflow the Overview cards live on terminal resize. ScreenResized may fire
@@ -262,6 +282,14 @@ public sealed class DashboardShell
             return;
         }
 
+        // Ctrl+L toggles the server picker portal, from any view.
+        if (e.KeyInfo.Key == ConsoleKey.L && (e.KeyInfo.Modifiers & ConsoleModifiers.Control) != 0)
+        {
+            ToggleServerPortal();
+            e.Handled = true;
+            return;
+        }
+
         if (_nav is not null && TryDigit(e.KeyInfo, out int view))
         {
             _nav.SelectedIndex = view; // header is index 0, first view is index 1 == digit 1
@@ -376,6 +404,7 @@ public sealed class DashboardShell
     // While the portal is open, forward every key to it before normal focus dispatch.
     private void OnPreviewKey(object? sender, KeyPressedEventArgs e)
     {
+        if (_serverPortal is not null && _serverPortal.ProcessKey(e.KeyInfo)) { e.Handled = true; return; }
         if (_portal is null) return;
         if (_portal.ProcessKey(e.KeyInfo))
             e.Handled = true;
@@ -411,6 +440,83 @@ public sealed class DashboardShell
             _window.RemovePortal(_nav, _portalNode);
         _portal = null;
         _portalNode = null;
+    }
+
+    // ── Server picker (Ctrl+L) ──────────────────────────────────────────
+
+    private string ServerButtonLabel()
+    {
+        var s = _active.Server;
+        var tag = s.IsEphemeral ? "(cli)" : s.Name;
+        return $"⚐ {tag} ▾";
+    }
+
+    private void UpdateServerButtonLabel()
+    {
+        if (_serverButton is not null) _serverButton.Text = ServerButtonLabel();
+    }
+
+    /// <summary>Switch the active server in-process: build a fresh context off the UI thread, then
+    /// swap it, clear state, and force a repaint. The poll loop's generation guard drops any in-flight
+    /// result from the previous server.</summary>
+    private async Task SwitchToAsync(ServerEntry entry)
+    {
+        if (entry.Identity == _active.Server.Identity) return;   // already active
+
+        var snapshotRoot = LazyCaddyConfig.Default.SnapshotDir;
+        int nextGen = ++_generation;
+        var next = await Task.Run(() => ConnectionContext.Create(entry, snapshotRoot, nextGen)).ConfigureAwait(true);
+
+        var old = _active;
+        _active = next;
+        _state.Reset();
+        UpdateServerButtonLabel();
+        ApplyAll();
+        RequestRefresh();
+        old.Dispose();
+    }
+
+    private void ToggleServerPortal()
+    {
+        if (_serverPortal is not null) { DismissServerPortal(); return; }
+        if (_window is null || _serverButton is null) return;
+        var portal = new ServerPortal(_servers, _active.Server, _window.Width, _window.Height);
+        portal.ServerSelected += (_, entry) => { DismissServerPortal(); _ = SwitchToAsync(entry); };
+        portal.AddRequested += (_, _) => { DismissServerPortal(); _ = AddServerAsync(); };
+        portal.ManageRequested += (_, _) => { DismissServerPortal(); _ = ManageServersAsync(); };
+        portal.DismissRequested += (_, _) => DismissServerPortal();
+        portal.CancelRequested += (_, _) => DismissServerPortal();
+        _serverPortal = portal;
+        _serverPortalNode = _window.CreatePortal(_serverButton, portal);
+        portal.FocusList(); // move window focus into the portal so it receives keystrokes
+    }
+
+    private void DismissServerPortal()
+    {
+        if (_serverPortal is null) return;
+        if (_window is not null && _serverButton is not null && _serverPortalNode is not null)
+            _window.RemovePortal(_serverButton, _serverPortalNode);
+        _serverPortal = null; _serverPortalNode = null;
+    }
+
+    // CRUD entrypoints.
+    private async Task AddServerAsync()
+    {
+        var entry = await EditServerModal.ShowAsync(_ws, null, _servers);
+        if (entry is null) return;
+        _servers.Add(entry);
+        _serverStore.Save(_servers);
+        await SwitchToAsync(entry);
+    }
+
+    private async Task ManageServersAsync()
+    {
+        var changed = await ManageServersModal.ShowAsync(_ws, _servers, _active.Server, _serverStore);
+        if (!changed) return;
+        var current = _servers.FirstOrDefault(s => s.Identity == _active.Server.Identity);
+        if (current is null) UpdateServerButtonLabel();
+        else if (current != _active.Server) await SwitchToAsync(current);
+        else UpdateServerButtonLabel();
     }
 
     private void ShowTransientError(string message)
@@ -456,7 +562,9 @@ public sealed class DashboardShell
 
             try
             {
+                var gen = _active.Generation;
                 var snapshot = await FetchSnapshotAsync(ct).ConfigureAwait(false);
+                if (gen != _active.Generation) continue;   // switched mid-fetch → drop stale result
                 _state.SetConnected(snapshot);
                 _ws.EnqueueOnUIThread(ApplyAll, "poll:apply");
             }

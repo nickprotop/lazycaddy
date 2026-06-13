@@ -20,11 +20,12 @@ namespace LazyCaddy.Views;
 public sealed class SnapshotsView : ICommandProvider
 {
     private readonly ConsoleWindowSystem _ws;
-    private readonly EditCoordinator _editor;
+    private readonly Func<EditCoordinator> _editorFn;
+    private EditCoordinator _editor => _editorFn();   // resolves the active EditCoordinator
     private TableControl? _table;
     private ToolbarControl? _toolbar;
 
-    public SnapshotsView(ConsoleWindowSystem ws, EditCoordinator editor) { _ws = ws; _editor = editor; }
+    public SnapshotsView(ConsoleWindowSystem ws, Func<EditCoordinator> editor) { _ws = ws; _editorFn = editor; }
 
     public object? SelectedTag => _table?.SelectedRow?.Tag;
 

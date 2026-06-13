@@ -22,21 +22,30 @@ internal static class Program
         // Support the PTY shim used by SharpConsoleUI's screenshot/testing harness.
         if (PtyShim.RunIfShim(args)) return 127;
 
-        if (!TryParseArgs(args, out var adminUrl, out var certDir, out var accessLog, out var exitCode))
+        if (!TryParseArgs(args, out var adminUrl, out var certDir, out var accessLog, out var urlExplicit, out var exitCode))
             return exitCode;
 
         try
         {
-            var config = LazyCaddyConfig.Default with { AdminApiUrl = adminUrl };
-            if (certDir is not null) config = config with { CaddyDataDir = certDir };
-            if (accessLog is not null) config = config with { AccessLogPath = accessLog };
+            // An explicit -u/--url (or positional URL) bypasses the configured server list and
+            // becomes an ephemeral active server; otherwise we resolve from servers.json.
+            string? cliUrl = urlExplicit ? adminUrl : null;
+
+            var serversPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".config", "lazycaddy", "servers.json");
+            var store = new ServerStore(serversPath);
+            var loaded = store.Load();
+            var selection = ServerSelection.Resolve(cliUrl, loaded.Servers);
+            var servers = selection.Servers;
+            var active = servers[selection.ActiveIndex];
+            if (certDir is not null) active = active with { CertDir = certDir };
+            if (accessLog is not null) active = active with { AccessLog = accessLog };
 
             // Flip simulateDisconnected via an env var to exercise the red status path.
             var simulateDown = Environment.GetEnvironmentVariable("LAZYCADDY_SIMULATE_DOWN") == "1";
-            var admin = new CaddyAdminClient(config, simulateDisconnected: simulateDown);
-            var prober = new UpstreamProber(config);
-            var snapshots = new SnapshotStore(config.InstanceSnapshotDir, config.MaxAutoSnapshots);
-            var editor = new EditCoordinator(admin, snapshots, config);
+            var snapshotRoot = LazyCaddyConfig.Default.SnapshotDir;
+            var ctx = ConnectionContext.Create(active, snapshotRoot, generation: 0, simulateDown);
 
             // Use the new opt-in async model: with InstallSynchronizationContext on,
             // await inside UI-thread handlers (e.g. row activation) resumes on the UI
@@ -56,12 +65,12 @@ internal static class Program
                 windowSystem.Shutdown(0);
             };
 
-            var shell = new DashboardShell(windowSystem, config, admin, prober, editor);
+            var shell = new DashboardShell(windowSystem, ctx, store, servers);
             shell.Create();
 
             await Task.Run(() => windowSystem.Run());
 
-            admin.Dispose();
+            ctx.Dispose();
             return 0;
         }
         catch (Exception ex)
@@ -78,11 +87,12 @@ internal static class Program
     /// Returns false when the app should exit without launching (help or bad input),
     /// with <paramref name="exitCode"/> set accordingly.
     /// </summary>
-    private static bool TryParseArgs(string[] args, out string adminUrl, out string? certDir, out string? accessLog, out int exitCode)
+    private static bool TryParseArgs(string[] args, out string adminUrl, out string? certDir, out string? accessLog, out bool urlExplicit, out int exitCode)
     {
         adminUrl = LazyCaddyConfig.Default.AdminApiUrl;
         certDir = null;
         accessLog = null;
+        urlExplicit = false;
         exitCode = 0;
 
         string? url = null;
@@ -156,6 +166,7 @@ internal static class Program
             adminUrl = url;
         }
 
+        urlExplicit = url is not null;
         return true;
     }
 
