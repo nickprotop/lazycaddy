@@ -24,9 +24,53 @@ It helps others discover the project and motivates continued development.
 
 </div>
 
-LazyCaddy makes a running Caddy instance legible and editable to someone who uses Caddy without living in its JSON. It reads the running config to show your routes, their handler chains, TLS certs, and upstream health — and writes guided, reversible edits back through the admin API. Every change auto-snapshots first, so nothing you do is one-way.
+LazyCaddy makes a running Caddy server easy to see and safe to change — without
+living in its JSON config. It reads the live config to show your routes, their
+handler chains, TLS certificates, and upstream health, and lets you make guided
+edits that are always reversible. Every change is applied **all-or-nothing** and
+snapshotted first, so nothing you do is one-way.
+
+It runs right in your terminal — over SSH, no browser, no extra service to host.
 
 **Inspect. Edit. Undo.**
+
+## Highlights
+
+- **See everything at a glance** — routes, handler chains, certs (with expiry
+  warnings), live upstream health, traffic metrics, and a visual routing map.
+- **Safe edits** — every change is applied as one atomic operation. If Caddy
+  rejects it, the whole change rolls back and your server keeps running on the
+  config it had. You see Caddy's own error, in plain language.
+- **Undo anything** — every edit is snapshotted first. Press `U` to undo the last
+  change, or browse and restore your full config history. Even restores are
+  reversible.
+- **Manage several Caddy servers** — switch between them instantly from one
+  window (press `Ctrl+L`).
+- **Find any action by name** — press `Ctrl+K` for a command palette; press `F1`
+  for built-in help.
+- **No setup** — a single binary, no database, no web port to secure.
+
+## Screenshots
+
+**Overview — status at a glance**
+
+![Overview](.github/screenshots/overview.png)
+
+**Topology — your routing, drawn out** (host → handler chain → upstream, health-colored)
+
+![Topology](.github/screenshots/topology.png)
+
+**Raw Config — the running config as live, editable JSON**
+
+![Raw Config](.github/screenshots/rawconfig.png)
+
+**Command palette (`Ctrl+K`) — find and run any action**
+
+![Command palette](.github/screenshots/palette.png)
+
+**Switch servers (`Ctrl+L`) — manage many Caddy servers from one window**
+
+![Server picker](.github/screenshots/servers.png)
 
 ## Quick Start
 
@@ -51,15 +95,60 @@ cd lazycaddy
 
 ```bash
 lazycaddy                                   # default: http://localhost:2019
-lazycaddy --url https://caddy.host:2019     # point at a different admin API
-lazycaddy --help                            # usage
+lazycaddy --url https://caddy.host:2019     # point at a specific Caddy
+lazycaddy --help                            # all options
 ```
 
-By default it targets the Caddy admin API at `http://localhost:2019`; pass `--url <URL>`
-(or a positional URL) to point elsewhere.
+With no arguments, LazyCaddy connects to the Caddy admin API at
+`http://localhost:2019`. Pass `--url <URL>` (or a bare URL) to point somewhere
+else for this session.
 
-**Keys:** `1`–`9` jump to a view · `R` refresh now · `U` quick-undo last change ·
-`Shift+S` snapshot now · `Q` / Esc quit · Tab + arrows navigate within a view.
+### Keys
+
+| Key | Does |
+|-----|------|
+| `1`–`9` | Jump to a view |
+| `Ctrl+K` | **Command palette** — find and run any action by name |
+| `Ctrl+L` | **Switch server** |
+| `F1` | **Help** |
+| `R` | Refresh now |
+| `U` | Undo the last change |
+| `Shift+S` | Take a snapshot now |
+| `Q` / `Esc` | Quit |
+
+Tab and the arrow keys move around within a view.
+
+### The command palette
+
+Press `Ctrl+K` from anywhere to open a searchable list of every action — jump to
+a view, refresh, undo, take a snapshot, switch server, open help, or run a
+view-specific command like *Edit route match* or *Enable HTTPS*. Type to filter,
+arrow keys to move, Enter to run. Actions that don't apply where you are show up
+dimmed with a reason, so you always know what's available.
+
+### Multiple servers
+
+LazyCaddy can manage several Caddy servers from one window. List them in
+`~/.config/lazycaddy/servers.json`:
+
+```json
+{
+  "servers": [
+    { "name": "prod",  "url": "http://localhost:2019" },
+    { "name": "edge",  "url": "https://edge.internal:2019", "readOnly": true }
+  ]
+}
+```
+
+The active server shows in the top-right (`⚐ prod ▾`). Press `Ctrl+L` (or click
+it) to open the server picker: switch instantly, or **Add / Manage** servers
+right in the app — including a *Test connection* check before you save. Switching
+re-points every view at the new server in place, with no restart, and each
+server keeps its own separate snapshot history.
+
+With no `servers.json`, LazyCaddy just uses the local default. A `--url` on the
+command line is added as a temporary entry for that session (not saved). Mark a
+server `"readOnly": true` to browse it with all edits disabled.
 
 ## Views
 
@@ -83,32 +172,37 @@ By default it targets the Caddy admin API at `http://localhost:2019`; pass `--ur
 - **Server** — server-level and global settings (listeners, automatic-HTTPS,
   TLS hardening).
 
-## How edits work
+## Edits are safe by design
 
-Everything that writes funnels through a single seam (`EditCoordinator`) that
-**auto-snapshots the full config before every change**, then applies a granular
-`PATCH`/`POST`/`DELETE` (or `/load`) to the admin API. Failures surface Caddy's
-own error message, formatted for humans. `U` is a one-key undo of the last
-change; the **Snapshots** view is the full history. Snapshots persist per
-instance under `~/.config/lazycaddy/snapshots/` and survive restarts.
+Changing a live reverse proxy is nerve-wracking — so LazyCaddy is built so you
+can't leave it half-broken:
 
-> **Note:** writes target a *real, running* Caddy. Point LazyCaddy at a test
-> instance before experimenting — never at production until you trust an edit.
+- **Snapshot first.** Before any change, LazyCaddy saves the current config. Undo
+  the last change with `U`, or restore any earlier point from the **Snapshots**
+  view. Restores are snapshotted too, so even an undo is reversible.
+- **All-or-nothing.** Each edit is applied as a single atomic operation. Either
+  the whole change takes effect, or — if Caddy rejects it — nothing changes and
+  your server keeps serving the config it already had. There's no partial,
+  half-applied state.
+- **Plain-language errors.** When Caddy refuses a change, you see its actual
+  reason, cleaned up for reading.
+- **See before you apply.** Edits show you a before/after diff and ask for
+  confirmation.
 
-## Architecture
+Snapshots are kept separately per server under `~/.config/lazycaddy/snapshots/`
+and survive restarts.
 
-- **One seam to Caddy** — everything goes through `ICaddyAdmin` /
-  `CaddyAdminClient`. Reads call pure, unit-tested parsers (`ConfigParser`,
-  `UpstreamsParser`, `MetricsParser`); writes return Caddy's verbatim error on
-  failure.
-- **One write seam** — `EditCoordinator` snapshots-before-write for every edit,
-  so all changes are reversible by construction.
-- **Threading** — a single background poll loop fetches all DTOs off the UI
-  thread into an immutable snapshot; every control mutation is marshalled back
-  via `EnqueueOnUIThread` (opt-in `InstallSynchronizationContext` model).
-- **Views** — `Views/*`, one per nav entry; each exposes `Build(panel)` and
-  `Update(state)`. Pure layout/render logic (topology graph, layered layout) is
-  separated from the canvas so it stays unit-testable.
+> **Heads up:** LazyCaddy edits a *real, running* Caddy. Try it against a test
+> instance first, and only edit production once you trust a change. A server
+> marked `"readOnly": true` in your `servers.json` disables all edits for safe
+> browsing.
+
+## Built on ConsoleEx
+
+LazyCaddy's terminal interface — the windows, tables, the command palette, the
+routing graph, syntax-highlighted JSON, and Markdown help — is powered by
+[SharpConsoleUI](https://github.com/nickprotop/ConsoleEx), the author's own
+console UI library.
 
 ## License
 
