@@ -50,28 +50,6 @@ It runs right in your terminal — over SSH, no browser, no extra service to hos
   for built-in help.
 - **No setup** — a single binary, no database, no web port to secure.
 
-## Screenshots
-
-**Overview — status at a glance**
-
-![Overview](.github/screenshots/overview.png)
-
-**Topology — your routing, drawn out** (host → handler chain → upstream, health-colored)
-
-![Topology](.github/screenshots/topology.png)
-
-**Raw Config — the running config as live, editable JSON**
-
-![Raw Config](.github/screenshots/rawconfig.png)
-
-**Command palette (`Ctrl+K`) — find and run any action**
-
-![Command palette](.github/screenshots/palette.png)
-
-**Switch servers (`Ctrl+L`) — manage many Caddy servers from one window**
-
-![Server picker](.github/screenshots/servers.png)
-
 ## Quick Start
 
 **Option 1: One-line install** (Linux, no .NET required)
