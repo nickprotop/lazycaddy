@@ -23,3 +23,5 @@ is unchanged.
 
 When started read-only, all edit commands are disabled (the command portal shows
 them dimmed with the reason).
+
+Back to the [Overview](#overview), or see all [Keyboard shortcuts](#keys).

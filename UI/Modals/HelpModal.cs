@@ -1,9 +1,11 @@
 // -----------------------------------------------------------------------
-// LazyCaddy - help viewer. A topic list (left) + a scrollable Markdown pane
-// (right). Opened by the "Show Help" command / F1. This is the help-system
-// SEAM: a flat, list-navigated viewer. Once ConsoleEx gains markup link-click
-// support, in-doc links can replace/augment the topic list — the content
-// provider (HelpContent) already returns Markdown, so only this viewer changes.
+// LazyCaddy - help viewer. A topic table-of-contents (left) + a scrollable
+// Markdown pane (right). Opened by F1 / the "Show Help" command.
+//
+// Markdown links are clickable (ConsoleEx MarkupControl.LinkClicked, mouse-only):
+// in-doc "#anchor" links jump to the matching topic; external http(s) links are
+// copied to the clipboard with a status confirmation (terminals can't reliably
+// launch a browser).
 // -----------------------------------------------------------------------
 
 using LazyCaddy.Configuration;
@@ -12,6 +14,8 @@ using LazyCaddy.UI.Help;
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
+using SharpConsoleUI.Events;
+using SharpConsoleUI.Helpers;
 using SharpConsoleUI.Layout;
 
 namespace LazyCaddy.UI.Modals;
@@ -21,6 +25,7 @@ public sealed class HelpModal : ModalBase<bool>
     private readonly IReadOnlyList<HelpTopic> _topics;
     private ListControl? _topicList;
     private MarkupControl? _pane;
+    private MarkupControl? _status;
 
     private HelpModal(IReadOnlyList<HelpTopic> topics) { _topics = topics; }
 
@@ -69,6 +74,7 @@ public sealed class HelpModal : ModalBase<bool>
             .WithColors(UIConstants.PrimaryText, Color.Transparent)
             .WithVerticalAlignment(VerticalAlignment.Top)
             .WithMargin(2, 0, 2, 0)
+            .OnLinkClicked(OnLinkClicked)
             .Build();
         var scroller = Controls.ScrollablePanel()
             .WithVerticalAlignment(VerticalAlignment.Fill)
@@ -80,6 +86,12 @@ public sealed class HelpModal : ModalBase<bool>
 
         Modal.AddControl(grid);
 
+        _status = Controls.Markup()
+            .WithMargin(2, 0, 2, 0)
+            .StickyBottom()
+            .Build();
+        Modal.AddControl(_status);
+
         Modal.AddControl(Controls.Toolbar()
             .AddButton(UIConstants.ActionButton("Close", "Esc", () => CloseWithResult(true)))
             .WithSpacing(2).WithMargin(2, 0, 2, 0).WithAboveLine().StickyBottom().Build());
@@ -89,7 +101,41 @@ public sealed class HelpModal : ModalBase<bool>
     }
 
     // Reuse the one MarkupControl — just swap its content (Markdig-rendered).
-    private void ShowTopic(HelpTopic? topic) => _pane?.SetMarkdown(topic?.Markdown ?? "");
+    private void ShowTopic(HelpTopic? topic)
+    {
+        _pane?.SetMarkdown(topic?.Markdown ?? "");
+        _status?.SetContent(new List<string> { "" });
+    }
+
+    // Markdown link clicked: "#anchor" jumps to that topic; external URLs are copied.
+    private void OnLinkClicked(object? sender, LinkClickedEventArgs e)
+    {
+        var url = e.Url ?? "";
+        if (url.StartsWith('#'))
+        {
+            var anchor = url[1..];
+            int idx = IndexOfTopic(anchor);
+            if (idx >= 0 && _topicList is not null)
+                _topicList.SelectedIndex = idx;   // triggers SelectedItemChanged → ShowTopic
+            else
+                SetStatus($"[{UIConstants.Warn.ToMarkup()}]No such topic: {Escape(anchor)}[/]");
+            return;
+        }
+        // External link: copy to clipboard (terminals can't reliably open a browser).
+        try { ClipboardHelper.SetText(url); SetStatus($"[{UIConstants.Good.ToMarkup()}]✓ Copied link:[/] [{UIConstants.MutedText.ToMarkup()}]{Escape(url)}[/]"); }
+        catch { SetStatus($"[{UIConstants.MutedText.ToMarkup()}]{Escape(url)}[/]"); }
+    }
+
+    private int IndexOfTopic(string anchor)
+    {
+        for (int i = 0; i < _topics.Count; i++)
+            if (string.Equals(_topics[i].Anchor, anchor, StringComparison.OrdinalIgnoreCase))
+                return i;
+        return -1;
+    }
+
+    private void SetStatus(string markup) => _status?.SetContent(new List<string> { markup });
+    private static string Escape(string s) => s.Replace("[", "[[").Replace("]", "]]");
 
     protected override void SetInitialFocus()
     {

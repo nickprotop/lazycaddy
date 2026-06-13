@@ -19,5 +19,5 @@ applies it in one transaction. If Caddy rejects it, the whole change rolls back
 and nothing is left half-applied. Each edit is also **snapshotted first**, so
 **Undo** (`u`) restores the previous state.
 
-See the other topics for per-view help, and **Keyboard shortcuts** for the full
-key list.
+See [Editing & snapshots](#editing) for how changes apply safely, and
+[Keyboard shortcuts](#keys) for the full key list. (Click a link to jump.)

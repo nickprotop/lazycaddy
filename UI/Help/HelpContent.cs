@@ -12,28 +12,32 @@ using LazyCaddy.Services;
 
 namespace LazyCaddy.UI.Help;
 
-/// <summary>One help topic: a title and its Markdown body.</summary>
-public sealed record HelpTopic(string Title, string Markdown);
+/// <summary>One help topic: a stable anchor (for in-doc `#anchor` links), a title, and its Markdown body.</summary>
+public sealed record HelpTopic(string Anchor, string Title, string Markdown);
 
 public static class HelpContent
 {
-    // Embedded .md resource base name → display title, in display order.
-    private static readonly (string Resource, string Title)[] Embedded =
+    // Embedded .md resource base name → (anchor, display title), in display order.
+    // The anchor is what in-doc `#anchor` links resolve to.
+    private static readonly (string Resource, string Anchor, string Title)[] Embedded =
     {
-        ("overview", "Overview"),
-        ("editing", "Editing & snapshots"),
+        ("overview", "overview", "Overview"),
+        ("editing", "editing", "Editing & snapshots"),
     };
+
+    /// <summary>Anchor for the generated keyboard-shortcuts topic (link to it with `#keys`).</summary>
+    public const string KeysAnchor = "keys";
 
     /// <summary>Build the topic list: embedded prose topics + the generated keys cheatsheet.</summary>
     public static IReadOnlyList<HelpTopic> Topics(CommandRegistry registry)
     {
         var topics = new List<HelpTopic>();
-        foreach (var (res, title) in Embedded)
+        foreach (var (res, anchor, title) in Embedded)
         {
             var md = LoadEmbedded($"LazyCaddy.Help.{res}.md");
-            if (md is not null) topics.Add(new HelpTopic(title, md));
+            if (md is not null) topics.Add(new HelpTopic(anchor, title, md));
         }
-        topics.Add(new HelpTopic("Keyboard shortcuts", HelpKeysTopic.Render(registry)));
+        topics.Add(new HelpTopic(KeysAnchor, "Keyboard shortcuts", HelpKeysTopic.Render(registry)));
         return topics;
     }
 
