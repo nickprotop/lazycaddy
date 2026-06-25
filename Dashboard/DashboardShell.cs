@@ -137,18 +137,15 @@ public sealed class DashboardShell
 
         _ = Task.Run(TailLoopAsync);
 
-        // Reflow the Overview cards live on terminal resize. ScreenResized may fire
-        // off the UI thread, so marshal the relayout back onto it (same event
-        // ServerHub uses for its dynamic dashboard layout).
-        _ws.ConsoleDriver.ScreenResized += (_, size) =>
-            _ws.EnqueueOnUIThread(() =>
-            {
-                _overview.HandleResize(size.Width);
-                _topology.HandleResize();
-                // Full-window repaint clears stale regions (e.g. Topology canvas
-                // ghosting the Overview cards at the top on resize).
-                _window?.Invalidate(true);
-            }, "view:reflow");
+        // Reflow the Overview cards live on terminal resize. WindowResized fires on
+        // the UI thread after the framework has repositioned windows, and the
+        // framework re-invalidates all windows after this handler returns.
+        _ws.WindowResized += (_, size) =>
+        {
+            _overview.HandleResize(size.Width);
+            _topology.HandleResize();
+            // already on the UI thread; framework re-invalidates all windows after this returns
+        };
     }
 
     private NavigationView BuildNavigation()

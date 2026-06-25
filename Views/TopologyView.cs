@@ -85,12 +85,15 @@ public sealed class TopologyView
         // ScrollablePanel provides the viewport and scrolling.
         var (w, h) = Extent(_placed);
         _canvas.CanvasWidth = w;
-        _canvas.CanvasHeight = h;
-        _canvas.Invalidate(); // request repaint on the UI thread
+        _canvas.CanvasHeight = h; // CanvasWidth/CanvasHeight setters self-invalidate (Relayout) on change
     }
 
-    /// <summary>Redraw on terminal resize (driver ScreenResized). Call on the UI thread.</summary>
-    public void HandleResize() => _canvas?.Invalidate();
+    /// <summary>
+    /// Hook for terminal resize. The canvas extent is derived from the graph (see <see cref="Update"/>),
+    /// not from the terminal size, so a resize needs no recompute here — the framework re-invalidates all
+    /// windows after the <c>WindowResized</c> handler returns, which repaints the canvas. No-op by design.
+    /// </summary>
+    public void HandleResize() { }
 
     // The buffer size needed to hold every node: max right/bottom edge, plus a little padding.
     private static (int W, int H) Extent(IReadOnlyList<PlacedNode> placed)
