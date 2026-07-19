@@ -12,6 +12,10 @@ public sealed record PlacedNode(TopoNode Node, int X, int Y, int Width, int Heig
 
 public static class LayeredLayout
 {
+    /// <param name="boxWidth">
+    /// MINIMUM box width. Each column is widened past this to fit its longest label, so nodes
+    /// are never truncated and columns of short labels stay narrow.
+    /// </param>
     public static IReadOnlyList<PlacedNode> Arrange(
         TopologyGraph graph, int boxWidth, int boxHeight, int hGap, int vGap)
     {
@@ -20,7 +24,27 @@ public static class LayeredLayout
         // COLUMN (X) = the node's chain position, compacted: if no route is long enough to use a
         // given column it consumes no horizontal space (so a fleet of short chains stays tight).
         var usedCols = graph.Nodes.Select(n => n.Column).Distinct().OrderBy(c => c).ToList();
-        var colX = usedCols.Select((c, idx) => (c, idx)).ToDictionary(t => t.c, t => t.idx);
+
+        // Each column is sized to its widest label rather than one global width, so a long host
+        // like "aperitto.duckdns.org :8444" is not truncated while narrow upstream columns stay
+        // tight. boxWidth acts as the MINIMUM. +2 for the box's left/right border characters.
+        var colWidth = usedCols.ToDictionary(
+            c => c,
+            c => Math.Max(
+                boxWidth,
+                graph.Nodes.Where(n => n.Column == c)
+                           .Select(n => (n.Label?.Length ?? 0) + 2)
+                           .DefaultIfEmpty(boxWidth)
+                           .Max()));
+
+        // Running x offset per column: sum of every preceding column's width plus one gap each.
+        var colX = new Dictionary<int, int>(usedCols.Count);
+        int xCursor = 0;
+        foreach (var c in usedCols)
+        {
+            colX[c] = xCursor;
+            xCursor += colWidth[c] + hGap;
+        }
 
         // ROW (Y) = swim-lane = the route the node belongs to. Lanes are compacted to consecutive
         // rows. Shared/laneless upstreams (Lane = -1) stack in their own rows from the top, since
@@ -34,18 +58,18 @@ public static class LayeredLayout
         // Laned nodes: X from chain column, Y from the node's lane.
         foreach (var node in graph.Nodes.Where(n => n.Lane >= 0))
         {
-            int x = colX[node.Column] * (boxWidth + hGap);
+            int x = colX[node.Column];
             int y = Step(laneRow[node.Lane]);
-            placed.Add(new PlacedNode(node, x, y, boxWidth, boxHeight));
+            placed.Add(new PlacedNode(node, x, y, colWidth[node.Column], boxHeight));
         }
 
         // Laneless upstream nodes: X from their (shared) column, stacked from the top.
         int upRow = 0;
         foreach (var node in graph.Nodes.Where(n => n.Lane < 0))
         {
-            int x = colX[node.Column] * (boxWidth + hGap);
+            int x = colX[node.Column];
             int y = Step(upRow++);
-            placed.Add(new PlacedNode(node, x, y, boxWidth, boxHeight));
+            placed.Add(new PlacedNode(node, x, y, colWidth[node.Column], boxHeight));
         }
 
         return placed;

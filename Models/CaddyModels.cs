@@ -42,7 +42,23 @@ public sealed record Route(
     string RawConfigJson,
     // Admin-API path of this route node, e.g. "apps/http/servers/srv0/routes/0".
     // Empty when unknown (e.g. dummy data). Used by Phase B for granular PATCH.
-    string ConfigPath = "");
+    string ConfigPath = "",
+    // Server name so that duplicate hosts on different servers can be distinguished in the UI.
+    string ServerName = "",
+    // Comma-separated listen addresses from this server, e.g. ":8443"
+    string Listen = "");
+
+/// <summary>An http server in the config, for pickers that must name a target server.</summary>
+/// <param name="Name">The server's key under apps/http/servers, e.g. "srv0".</param>
+/// <param name="Listen">Comma-separated listen addresses, e.g. ":8443". Empty when absent.</param>
+public sealed record ServerInfo(string Name, string Listen)
+{
+    /// <summary>Human label for a picker: "srv0 — :8443", or just the name when listen is unknown.</summary>
+    public string Label => string.IsNullOrEmpty(Listen) ? Name : $"{Name} — {Listen}";
+
+    /// <summary>Admin-API path of this server, e.g. "apps/http/servers/srv0".</summary>
+    public string ConfigPath => $"apps/http/servers/{Name}";
+}
 
 /// <summary>A TLS certificate managed by (or loaded into) Caddy.</summary>
 public sealed record Cert(
@@ -55,7 +71,7 @@ public sealed record Cert(
     // When false, Expires is meaningless and the UI shows "unknown" instead of a days-left value.
     bool ExpiryKnown = true)
 {
-    /// <summary>Whole days until expiry from <paramref name="now"/> (floored, may be negative).</summary>
+    /// <summary>Whole days until expiry from <paramref name="now" /> (floored, may be negative).</summary>
     public int DaysLeft(DateTimeOffset now) => (int)Math.Floor((Expires - now).TotalDays);
 }
 
@@ -75,7 +91,7 @@ public sealed record Upstream(
 /// <summary>Request-rate-over-time series for the optional Overview sparkline.</summary>
 /// <remarks>
 /// Sourced from Caddy's Prometheus <c>/metrics</c> endpoint, which is not guaranteed
-/// to be enabled. <see cref="Available"/> is false when metrics could not be read; the
+/// to be enabled. <see cref="Available" /> is false when metrics could not be read; the
 /// Overview view hides the sparkline card in that case.
 /// </remarks>
 public sealed record MetricsSnapshot(

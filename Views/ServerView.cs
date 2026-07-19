@@ -58,6 +58,9 @@ public sealed class ServerView : ICommandProvider
     private bool _loadedH1, _loadedH2, _loadedH3, _loadedDisable, _loadedDisableRedir, _loadedDisableCerts;
     private string _loadedTlsMin = TlsDefault, _loadedTlsMax = TlsDefault, _loadedTlsCipher = CipherDefault;
 
+    // Track the user's server selection across polls (restored by SyncServerDropdown).
+    private string? _selectedServer;
+
     // ── TLS-hardening dropdown values ──
     private const string TlsDefault = "(default)";   // omit protocol_min/max
     private const string CipherDefault = "Default";  // omit cipher_suites
@@ -353,7 +356,7 @@ public sealed class ServerView : ICommandProvider
         string? serverName = null;
         if (_server is { } dd && dd.SelectedValue is { } sv && servers.Contains(sv)) serverName = sv;
         if (serverName is null && servers.Count > 0) serverName = servers[0];
-        if (serverName is not null) _serverPath = $"apps/http/servers/{serverName}";
+        if (serverName is not null) { _serverPath = $"apps/http/servers/{serverName}"; _selectedServer = serverName; }
 
         // ── The selected server object ──
         JsonElement server = default; bool hasServerObj = false;
@@ -451,7 +454,13 @@ public sealed class ServerView : ICommandProvider
         if (current.Count == servers.Count && current.SequenceEqual(servers)) return;
         _server.ClearItems();
         foreach (var s in servers) _server.AddItem(s);
-        if (servers.Count > 0) _server.SelectedIndex = 0;
+        // Restore the user's selection. IndexOf returns -1 when the previously selected
+        // server is gone from the config (renamed/removed), so fall back to the first.
+        if (servers.Count > 0)
+        {
+            int idx = servers.IndexOf(_selectedServer ?? servers[0]);
+            _server.SelectedIndex = idx >= 0 ? idx : 0;
+        }
     }
 
     // Repopulate the read-only logging table from logging/logs. Runs every poll (even while the
@@ -703,10 +712,10 @@ public sealed class ServerView : ICommandProvider
             var key = c.Path.Contains('/') ? c.Path[(c.Path.LastIndexOf('/') + 1)..] : c.Path;
             sb.Append("  ").Append(JsonSerializer.Serialize(key)).Append(": ")
               .Append((useNew ? c.New : c.Old).Replace("\n", "\n  "));
-            if (i < changes.Count - 1) sb.Append(',');
-            sb.Append('\n');
+            if (i < changes.Count - 1) sb.Append(",");
+            sb.Append("\n");
         }
-        sb.Append('}');
+        sb.Append("}");
         return sb.ToString();
     }
 
@@ -808,7 +817,7 @@ public sealed class ServerView : ICommandProvider
         var list = new List<string>();
         if (obj.TryGetProperty(name, out var arr) && arr.ValueKind == JsonValueKind.Array)
             foreach (var e in arr.EnumerateArray())
-                if (e.ValueKind == JsonValueKind.String) list.Add(e.GetString() ?? "");
+                if (e.ValueKind == JsonValueKind.String) list.Add(e.GetString()!);
         return list;
     }
 

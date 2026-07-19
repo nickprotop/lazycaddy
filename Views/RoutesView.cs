@@ -68,6 +68,7 @@ public sealed class RoutesView : ICommandProvider
         _table = Controls.Table()
             .AddColumn("Host / Match", TextJustification.Left)
             .AddColumn("Upstream", TextJustification.Left)
+            .AddColumn("Listen", TextJustification.Left, 16)
             .AddColumn("TLS", TextJustification.Center, 6)
             .AddColumn("Status", TextJustification.Left, 12)
             .Rounded()
@@ -247,6 +248,7 @@ public sealed class RoutesView : ICommandProvider
             sb.Append(r.ConfigPath).Append('|')
               .Append(r.HostOrMatch).Append('|')
               .Append(r.Upstream).Append('|')
+              .Append(r.Listen).Append('|')
               .Append(r.TlsEnabled ? '1' : '0').Append('|')
               .Append(r.Status).Append('|')
               .Append(expanded ? 'E' : 'c');
@@ -336,6 +338,7 @@ public sealed class RoutesView : ICommandProvider
         return new TableRow(
             $"{arrow} {Escape(r.HostOrMatch)}",
             Escape(r.Upstream),
+            Escape(r.Listen),
             tls,
             UIConstants.StatusMarkup(r.Status))
         {
@@ -349,6 +352,7 @@ public sealed class RoutesView : ICommandProvider
         return new TableRow(
             $"    [{muted}]{Escape(hd.Type)}[/]",
             Escape(hd.Summary),
+            "",
             "",
             "")
         {
@@ -602,8 +606,15 @@ public sealed class RoutesView : ICommandProvider
 
     private void NewRoute()
     {
+        // Seed the wizard with the selected route's server. With nothing selected, use the first
+        // server that actually exists rather than assuming one named "srv0" is there -- on a
+        // multi-server config that guess silently wrote the route to the wrong server.
         var selected = _table?.SelectedRow?.Tag as Route;
-        var server = selected is { } route ? ServerPathFor(route) : "apps/http/servers/srv0";
+        var server = selected is { } route
+            ? ServerPathFor(route)
+            : _snapshot?.Routes.Select(r => r.ServerName).FirstOrDefault(n => !string.IsNullOrEmpty(n)) is { } first
+                ? $"apps/http/servers/{first}"
+                : "";
         _ = NewRouteWizard.ShowAsync(_windowSystem, _editor, server);
     }
 

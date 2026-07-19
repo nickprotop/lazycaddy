@@ -59,7 +59,13 @@ public sealed class TopologyGraph
         foreach (var route in snap.Routes)
         {
             var hostId = $"host:{r}";
-            nodes.Add(new TopoNode(hostId, NodeKind.Host, route.HostOrMatch,
+            // Several servers can serve the SAME host on different listen ports, so the
+            // hostname alone is ambiguous. Node identity is already per-route (host:{r}),
+            // but the label needs the listen address or the two nodes look identical.
+            var hostLabel = string.IsNullOrEmpty(route.Listen)
+                ? route.HostOrMatch
+                : $"{route.HostOrMatch} {route.Listen}";
+            nodes.Add(new TopoNode(hostId, NodeKind.Host, hostLabel,
                 route.Status == "active" ? NodeHealth.Up : NodeHealth.Warn) { Route = route, Lane = r, Column = 0 });
 
             // Walk the route's real handler chain. Each middleware becomes a node chained

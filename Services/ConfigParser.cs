@@ -37,13 +37,16 @@ public static class ConfigParser
                 var host = ExtractMatchSummary(route);
                 var upstream = ExtractUpstream(route);
                 bool tls = host.Split(", ").Any(h => tlsHosts.Contains(h));
+                string listen = JoinArray(server.Value, "listen");
                 routes.Add(new Route(
                     HostOrMatch: host,
                     Upstream: upstream,
                     TlsEnabled: tls,
                     Status: "active",
                     RawConfigJson: Pretty(route),
-                    ConfigPath: path));
+                    ConfigPath: path,
+                    ServerName: server.Name,
+                    Listen: listen));
                 idx++;
             }
         }
@@ -112,6 +115,24 @@ public static class ConfigParser
     /// Extract managed certificates from tls.automation.policies. Expiry is not in the
     /// config; default to a far date and let a later pass enrich from real cert metadata.
     /// </summary>
+    /// <summary>
+    /// Every http server in the config, with its listen addresses. Used where the user has to
+    /// pick a target server (adding a route): the bare name "srv0" means nothing to them, but
+    /// "srv0 — :8443" does, and several servers can share a hostname on different ports.
+    /// </summary>
+    public static IReadOnlyList<ServerInfo> ParseServers(string configJson)
+    {
+        var result = new List<ServerInfo>();
+        using var doc = JsonDocument.Parse(configJson);
+        if (!TryGetPath(doc.RootElement, out var servers, "apps", "http", "servers"))
+            return result;
+
+        foreach (var server in servers.EnumerateObject())
+            result.Add(new ServerInfo(server.Name, JoinArray(server.Value, "listen")));
+
+        return result;
+    }
+
     public static IReadOnlyList<Cert> ParseCerts(string configJson)
     {
         var certs = new List<Cert>();
@@ -195,4 +216,16 @@ public static class ConfigParser
     }
 
     private static string Pretty(JsonElement el) => JsonSerializer.Serialize(el, Indented);
+
+    private static string JoinArray(JsonElement obj, string name) =>
+        string.Join(", ", ArrayValues(obj, name));
+
+    private static List<string> ArrayValues(JsonElement obj, string name)
+    {
+        var list = new List<string>();
+        if (obj.TryGetProperty(name, out var arr) && arr.ValueKind == JsonValueKind.Array)
+            foreach (var e in arr.EnumerateArray())
+                if (e.ValueKind == JsonValueKind.String) list.Add(e.GetString()!);
+        return list;
+    }
 }

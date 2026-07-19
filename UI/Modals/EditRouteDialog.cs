@@ -38,7 +38,12 @@ public sealed class EditRouteDialog : ModalBase<bool>
     public static Task<bool> ShowAsync(ConsoleWindowSystem ws, Route route, EditCoordinator editor, Window? parent = null)
         => ((ModalBase<bool>)new EditRouteDialog(route, editor)).ShowAsync(ws, parent);
 
-    protected override string GetTitle() => $" Edit route — {_route.HostOrMatch} ";
+    // Include the listen address: the same host can be served by several servers on
+    // different ports, and the hostname alone doesn't say which one you're editing.
+    protected override string GetTitle() =>
+        string.IsNullOrEmpty(_route.Listen)
+            ? $" Edit route — {_route.HostOrMatch} "
+            : $" Edit route — {_route.HostOrMatch} {_route.Listen} ";
     protected override (int width, int height) GetSize() => (74, 17);
     protected override bool GetDefaultResult() => false;
 

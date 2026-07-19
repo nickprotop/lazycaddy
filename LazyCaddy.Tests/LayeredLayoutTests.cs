@@ -16,7 +16,7 @@ public class LayeredLayoutTests
             CaddyStatus.Unknown,
             new[]
             {
-                new Route("a.example", "127.0.0.1:1", true, "active", ProxyJson("127.0.0.1:1"), "p0"),
+                new Route("a.example", "127.0.0.1:1", true, "active", ProxyJson("127.0.0.1:1"), "p0", "", ""),
                 new Route("b.example", "127.0.0.1:2", true, "active", ProxyJson("127.0.0.1:2"), "p1"),
             },
             System.Array.Empty<Cert>(),
